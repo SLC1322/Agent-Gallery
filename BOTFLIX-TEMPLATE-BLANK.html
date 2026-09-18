@@ -1,0 +1,1998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Site Gallery Template</title>
+<!-- METADATA
+  PAGE NAME:   Single-File Shell Template (srcdoc-free, sandboxed-embed pattern)
+  PURPOSE:     A generic, reusable starting point for a Netflix-style gallery of
+               items (agents, tools, docs -- whatever the site catalogs), built to
+               be dropped into a SharePoint page via an embed/script web part.
+               Derived by stripping a real production site's content out of the
+               BotFlix shell while keeping its structure and behavior intact.
+  HOW TO USE:  Search this file for bracketed placeholders like [SITE NAME] and
+               [SITE OWNER] and replace them with your own. Replace the two
+               example entries in agentData (near the bottom, in a script
+               block) with your real items, following the field pattern they
+               demonstrate -- see the in-app Getting Started page (#learn) for a
+               walkthrough of the same steps. Swap the placeholder theme colors
+               in :root near the top of the <style> block for your own palette.
+  ARCHITECTURE: One shared hero-page template (in the ROUTER/ENGINE script)
+               renders every item from its agentData entry into a single
+               #app-frame <div> -- no nested iframes, so no cross-origin
+               boundary between the shell and its own content. The FIX-numbered
+               comments in that script document real, still-load-bearing
+               workarounds for running inside a sandboxed SharePoint embed
+               (hashchange timing, click delegation, etc.) -- keep them.
+  VERSION:     v1.0 template, [Month Year]
+-->
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Source+Sans+3:ital,wght@0,300;0,400;0,600;1,300;1,400&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<!-- Fonts above are a working default (Rajdhani for display type, Source Sans 3 for body text, Courier Prime for monospace/markdown panes) -- swap the family names here and in the CSS below for your own. -->
+<style>
+  /* Placeholder theme. These custom properties are the whole color system
+     for the page -- swap the values below for your own brand palette
+     (light or dark) and the rest of the CSS follows automatically. The
+     values here are intentionally generic so nothing ships looking like a
+     finished brand. */
+  :root {
+    --bg:#0d0f14; --bar:#171a21; --primary:#6366F1; --primary-hover:#7c7ff2; --primary-hover-dark:#4f46e5;
+    --card-w:clamp(220px, 20vw, 360px); --card-h:clamp(330px, 30vw, 540px);
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; }
+  body { background:var(--bg); color:#fff; font-family:'Segoe UI',system-ui,sans-serif; display:flex; flex-direction:column; overflow:hidden; }
+
+  /* -- TOPBAR --
+     Sizes are clamp()-based so the bar scales continuously with viewport
+     width instead of jumping at fixed breakpoints. */
+  .topbar {
+    flex:0 0 auto; display:flex; align-items:center;
+    gap:clamp(10px, 3vw, 32px);
+    padding:clamp(10px, 1.8vw, 20px) clamp(14px, 4vw, 40px);
+    background:rgba(17,17,17,0.8);
+    border-bottom:1px solid rgba(255,255,255,0.08);
+    backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); z-index:10;
+    overflow-x:auto; overflow-y:hidden; /* safety net, not the primary fix -- fluid clamp()s below should mean this never actually has to scroll */
+  }
+  .brand-sub {
+    color:var(--primary); font-weight:700; letter-spacing:0.2em;
+    font-size:clamp(1.3rem, 1.1rem + 1.6vw, 2.6rem);
+    font-family:'Rajdhani',sans-serif; white-space:nowrap; flex:0 0 auto;
+  }
+  .navlinks { display:flex; gap:clamp(4px, 1vw, 10px); margin-left:clamp(8px, 2vw, 16px); flex:0 1 auto; min-width:0; }
+  .navlinks a {
+    display:inline-flex; align-items:center; justify-content:center;
+    color:rgba(255,255,255,0.6); text-decoration:none; white-space:nowrap;
+    font-family:'Rajdhani',sans-serif; font-weight:600;
+    font-size:clamp(0.72rem, 0.6rem + 0.45vw, 1rem);
+    padding:clamp(6px, 0.9vw, 12px) clamp(9px, 1.6vw, 20px);
+    border-radius:3px; transition:all 0.2s;
+  }
+  .navlinks a:hover, .navlinks a:focus-visible { color:#fff; background:rgba(255,255,255,0.06); }
+  .navlinks a:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+  .navlinks a.active { color:#fff; background:rgba(99,102,241,0.2); }
+  .status {
+    font-size:clamp(0.6rem, 0.5rem + 0.3vw, 0.85rem);
+    white-space:nowrap; margin-left:auto; flex:0 0 auto; padding-left:8px;
+  }
+  html.js .status { margin-left:0; }
+  .status .chip-static { color:#e8b84b; }
+  html.js .status .chip-static { display:none; }
+  .status .chip-live { display:none; color:#58c08a; }
+  html.js .status .chip-live { display:inline; }
+
+  #frame-wrap { flex:1 1 auto; position:relative; }
+  #app-frame { position:absolute; inset:0; width:100%; height:100%; background:var(--bg); visibility:hidden; z-index:1; overflow-y:auto; overflow-x:hidden; }
+
+  /* -- MAIN SCROLL AREA -- */
+  #home { position:absolute; inset:0; overflow-y:auto; overflow-x:hidden; display:block; z-index:2; scroll-behavior:smooth; }
+  #home.off { display:none; }
+
+  /* -- HERO BACKGROUND -- */
+  .hero-bg {
+    position:absolute; top:0; left:0; width:100%; height:70vh; min-height:500px;
+    z-index:0; pointer-events:none;
+    background: url('SiteAssets/YOUR-HERO-BACKGROUND.jpg') center 30% / cover no-repeat;
+  }
+  .hero-bg::after {
+    content:''; position:absolute; inset:0;
+    background: linear-gradient(180deg,
+      rgba(10,10,10,0.15) 0%, rgba(10,10,10,0.4) 35%,
+      rgba(10,10,10,0.75) 55%, rgba(10,10,10,0.92) 70%, var(--bg) 88%);
+  }
+  .home-content { position:relative; z-index:1; padding-top:20px; padding-bottom:60px; }
+
+
+  /* -- FEATURED HERO CAROUSEL -- */
+  .hero-carousel {
+    position:relative; width:100%; padding:0 0 24px; overflow:hidden;
+  }
+  .hero-carousel-track {
+    display:flex; gap:12px;
+    height:clamp(280px, 42vh, 480px);
+    transition:transform 0.7s cubic-bezier(0.25,0.46,0.45,0.94);
+    will-change:transform;
+    padding:0 48px;
+  }
+  .hero-slide {
+    /* 74% width leaves room for the prev/next slides to peek on both
+       sides without over-cropping tall source media. */
+    position:relative; flex:0 0 74%;
+    border-radius:10px; overflow:hidden; cursor:pointer;
+    text-decoration:none; display:block; color:#fff;
+    opacity:0.35; transform:scale(0.94);
+    transition:opacity 0.7s ease, transform 0.7s cubic-bezier(0.25,0.46,0.45,0.94);
+  }
+  .hero-slide.active { opacity:1; transform:scale(1); z-index:2; }
+  .hero-slide-bg {
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    filter:brightness(0.55); transition:filter 0.4s, transform 6s ease;
+    transform:scale(1.0);
+  }
+  .hero-slide.active .hero-slide-bg { transform:scale(1.06); }
+  .hero-slide:hover .hero-slide-bg, .hero-slide:focus-visible .hero-slide-bg {
+    filter:brightness(0.4);
+  }
+  .hero-slide-overlay {
+    position:absolute; inset:0;
+    background:linear-gradient(90deg, rgba(10,10,10,0.88) 0%, rgba(10,10,10,0.55) 40%, transparent 70%);
+  }
+  .hero-slide-content {
+    position:absolute; bottom:0; left:0; top:0; width:55%; min-width:320px;
+    display:flex; flex-direction:column; justify-content:center;
+    padding:40px 48px; z-index:2;
+    opacity:0; transition:opacity 0.5s ease 0.15s;
+  }
+  .hero-slide.active .hero-slide-content { opacity:1; }
+  .hero-slide-badge {
+    width:72px; height:72px; margin-bottom:12px;
+    object-fit:contain; aspect-ratio:1/1;
+    filter:drop-shadow(0 2px 8px rgba(0,0,0,0.5));
+  }
+  .hero-slide-name {
+    font-family:'Rajdhani',sans-serif; font-size:1.8rem; font-weight:700;
+    letter-spacing:0.04em; margin-bottom:6px;
+    text-shadow:0 2px 12px rgba(0,0,0,0.7);
+  }
+  .hero-slide-hook {
+    font-size:1rem; color:rgba(255,255,255,0.85); line-height:1.5;
+    max-width:480px; margin-bottom:16px;
+    text-shadow:0 1px 6px rgba(0,0,0,0.6);
+  }
+  .hero-slide-desc {
+    font-size:0.82rem; color:rgba(255,255,255,0.6); line-height:1.55;
+    max-width:460px;
+  }
+  .hero-slide-cta {
+    display:inline-block; margin-top:18px; padding:8px 22px;
+    background:var(--primary); color:#fff; border:none; border-radius:4px;
+    font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.88rem;
+    letter-spacing:0.06em; text-decoration:none; cursor:pointer;
+    transition:background 0.2s, transform 0.2s; width:fit-content;
+  }
+  .hero-slide-cta:hover { background:#7c7ff2; transform:translateY(-1px); }
+  .hero-indicators {
+    position:absolute; bottom:18px; left:50%; transform:translateX(-50%); z-index:5;
+    display:flex; gap:8px; align-items:center;
+  }
+  .hero-dot {
+    width:10px; height:10px; border-radius:50%;
+    border:2px solid rgba(255,255,255,0.5);
+    background:transparent; cursor:pointer; transition:all 0.3s; padding:0;
+  }
+  .hero-dot.active {
+    background:var(--primary); border-color:var(--primary);
+    width:28px; border-radius:5px;
+  }
+  .hero-dot:hover { border-color:#fff; }
+
+  /* -- TITLE BLOCK -- */
+  .title-block { padding:0 48px 32px; }
+  .title-block h1 {
+    font-family:'Rajdhani',sans-serif; font-size:2rem; font-weight:700;
+    letter-spacing:0.04em; margin-bottom:4px; text-shadow:0 2px 16px rgba(0,0,0,0.7);
+  }
+  .title-block p.sub { color:rgba(255,255,255,0.5); font-size:0.82rem; }
+
+  /* -- ROW -- */
+  .agent-row { margin-bottom:28px; position:relative; }
+  .row-header { padding:0 48px 10px; display:flex; align-items:baseline; gap:12px; }
+  .row-header h2 {
+    font-family:'Rajdhani',sans-serif; font-size:1.1rem; font-weight:700;
+    letter-spacing:0.06em; color:#e0e0e0;
+  }
+
+  /* -- HORIZONTAL SCROLL TRACK -- */
+  .scroll-track {
+    display:flex; gap:10px; overflow:hidden;
+    /* Top/bottom padding must clear the .card:hover 1.35x scale-up (a
+       card grows ~0.175x its own height on each side from its center), or
+       overflow:hidden clips the card title/desc as hover expands it. Tied
+       to --card-h via calc() so it stays correct at every breakpoint. */
+    padding:calc(var(--card-h) * 0.19) 48px calc(var(--card-h) * 0.19);
+  }
+  .track-wrap { position:relative; }
+  .track-wrap::before, .track-wrap::after {
+    content:''; position:absolute; top:0; bottom:0; width:48px; z-index:3; pointer-events:none;
+  }
+  .track-wrap::before { left:0; background:linear-gradient(90deg, var(--bg), transparent); }
+  .track-wrap::after  { right:0; background:linear-gradient(-90deg, var(--bg), transparent); }
+
+  /* -- ROW NAV ARROWS (glassy) -- */
+  .row-arrow {
+    position:absolute; top:50%; transform:translateY(-50%); z-index:150;
+    width:40px; height:40px; border-radius:50%;
+    background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15);
+    color:rgba(255,255,255,0.7); font-size:1.1rem; cursor:pointer;
+    display:none; align-items:center; justify-content:center;
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    transition:background 0.2s, border-color 0.2s, color 0.2s;
+  }
+  .row-arrow.visible { display:flex; }
+  .row-arrow:hover, .row-arrow:focus-visible {
+    background:rgba(99,102,241,0.5); border-color:var(--primary); color:#fff;
+  }
+  .row-arrow--prev { left:6px; }
+  .row-arrow--next { right:6px; }
+
+  /* -- CARD -- */
+  .card {
+    position:relative; flex:0 0 var(--card-w); height:var(--card-h);
+    background:rgba(30,30,30,0.6); border:1px solid rgba(255,255,255,0.07);
+    border-radius:6px; overflow:visible; text-decoration:none;
+    transition:transform 0.35s cubic-bezier(0.25,0.46,0.45,0.94),
+               box-shadow 0.35s ease, z-index 0s 0.35s;
+    z-index:1;
+  }
+  .card-inner {
+    position:absolute; inset:0; border-radius:6px; overflow:hidden;
+    border:1px solid transparent; transition:border-color 0.3s;
+  }
+  .card:hover, .card:focus-visible {
+    transform:scale(1.35);
+    box-shadow:0 12px 40px rgba(0,0,0,0.7), 0 0 0 1px rgba(99,102,241,0.4);
+    z-index:100;
+    transition:transform 0.35s cubic-bezier(0.25,0.46,0.45,0.94),
+               box-shadow 0.35s ease, z-index 0s 0s;
+  }
+  .card:hover .card-inner, .card:focus-visible .card-inner { border-color:var(--primary); }
+  .card[data-show="no"] { display:none; }
+  .card img.default-img, .card img.hover-img {
+    position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+  }
+  .card img.hover-img { opacity:0; transition:opacity 0.3s; }
+  .card:hover img.hover-img, .card:focus-visible img.hover-img { opacity:1; }
+  .card.has-media:hover img.default-img, .card.has-media:focus-visible img.default-img { opacity:0; transition:opacity 0.3s; }
+
+  .card-overlay {
+    position:absolute; inset:0;
+    background:linear-gradient(to top, rgba(10,10,10,0.95) 0%, rgba(10,10,10,0.3) 50%, transparent 75%);
+  }
+  .card-content { position:absolute; left:0; right:0; bottom:0; padding:12px 14px; }
+  .card-title {
+    color:#fff; font-weight:700; font-size:1rem; letter-spacing:0.02em; margin-bottom:4px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .card:hover .card-title, .card:focus-visible .card-title { white-space:normal; }
+  .card-desc {
+    color:rgba(255,255,255,0.6); font-size:0.78rem; line-height:1.4;
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
+    overflow:hidden; text-overflow:ellipsis;
+    opacity:0.85;
+    transition:opacity 0.3s ease;
+  }
+  .card:hover .card-desc, .card:focus-visible .card-desc {
+    -webkit-line-clamp:unset; opacity:1;
+  }
+  .card:not(.has-media) .card-content { top:0; display:flex; flex-direction:column; justify-content:flex-end; }
+
+  /* -- WORKFLOW CARDS (grid, not carousel) -- */
+  .wf-row { padding:0 48px; }
+  .wf-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:12px; }
+  .card.wf, .card-wf {
+    background:rgba(30,30,30,0.5); border:1px solid rgba(255,255,255,0.07);
+    border-radius:6px; padding:18px 20px; text-decoration:none;
+    transition:border-color 0.25s, background 0.25s; backdrop-filter:blur(6px);
+    height:auto; flex:none; overflow:hidden;
+  }
+  .card.wf:hover, .card-wf:hover { border-color:rgba(99,102,241,0.4); background:rgba(40,40,40,0.6); transform:none; box-shadow:none; }
+  .wf-title { font-weight:700; font-size:0.92rem; margin-bottom:8px; }
+  .wf-desc { color:rgba(255,255,255,0.6); font-size:0.78rem; line-height:1.5; margin-bottom:12px; }
+  .wf-chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .wf-chips a, .wf-chips span {
+    font-size:0.68rem; font-weight:700; letter-spacing:0.03em;
+    border:1px solid rgba(99,102,241,0.5); border-radius:3px;
+    padding:3px 8px; color:rgba(255,255,255,0.8); text-decoration:none; background:rgba(99,102,241,0.12);
+  }
+  .wf-chips a:hover { background:var(--primary); }
+
+  .footer {
+    flex:0 0 auto; text-align:center; font-size:0.6rem;
+    color:rgba(255,255,255,0.25); padding:6px 0;
+    background:rgba(17,17,17,0.85); border-top:1px solid rgba(255,255,255,0.06);
+    backdrop-filter:blur(12px); z-index:10;
+  }
+  .footer-ai-note { opacity:0.7; margin-top:2px; }
+
+  @media (max-width:768px) {
+    .hero-carousel-track { padding:0 20px; gap:8px; }
+    .hero-slide { flex:0 0 84%; }
+    .hero-slide-content { padding:24px 20px; width:70%; min-width:240px; }
+    .hero-slide-name { font-size:1.3rem; }
+    .hero-slide-hook { font-size:0.85rem; }
+    .hero-slide-desc { display:none; }
+    .hero-slide-badge { width:52px; height:52px; }
+
+    .home-content { padding-top:12px; }
+    .title-block, .row-header { padding-left:20px; padding-right:20px; }
+    .scroll-track { padding-left:20px; padding-right:20px; }
+    .track-wrap::before, .track-wrap::after { width:20px; }
+    .wf-row { padding:0 20px; }
+    :root { --card-w:clamp(160px, 42vw, 260px); --card-h:clamp(240px, 63vw, 390px); }
+    .card:hover, .card:focus-visible { transform:scale(1.2); }
+  }
+
+/* == DEPLOY WALKTHROUGH DRAWER == */
+  .bfx-drawer-overlay {
+    position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:9998;
+    opacity:0; visibility:hidden; transition:opacity 0.35s, visibility 0.35s;
+  }
+  .bfx-drawer-overlay.open { opacity:1; visibility:visible; }
+
+  .bfx-drawer {
+    position:fixed; top:0; right:0; width:480px; max-width:100vw; height:100vh;
+    background:#141414; z-index:9999; transform:translateX(100%);
+    transition:transform 0.35s cubic-bezier(0.4,0,0.2,1);
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .bfx-drawer.open { transform:translateX(0); }
+
+  .bfx-drawer-header {
+    background:#1e1e1e; padding:18px 24px; display:flex; align-items:center;
+    justify-content:space-between; border-bottom:1px solid #2e2e2e; flex-shrink:0;
+  }
+  .bfx-drawer-title {
+    font-family:'Rajdhani',sans-serif; font-weight:700; font-size:1.15rem;
+    letter-spacing:0.5px; color:#f4f5f4;
+  }
+  .bfx-drawer-title span { color:#6366f1; }
+
+  .bfx-btn-close {
+    background:none; border:1px solid #555; color:#8a9090; width:32px; height:32px;
+    font-size:1.1rem; cursor:pointer; display:flex; align-items:center;
+    justify-content:center; transition:border-color 0.2s, color 0.2s;
+  }
+  .bfx-btn-close:hover, .bfx-btn-close:focus-visible {
+    border-color:#6366f1; color:#6366f1; outline:none;
+  }
+
+  .bfx-drawer-body { flex:1; overflow-y:auto; display:flex; flex-direction:column; }
+
+  .bfx-mock-browser {
+    position:sticky; top:0; z-index:2; background:#1e1e1e;
+    border-bottom:1px solid #2e2e2e; flex-shrink:0;
+  }
+  .bfx-browser-chrome {
+    background:#262626; padding:8px 14px; display:flex; align-items:center; gap:8px;
+  }
+  .bfx-browser-dots { display:flex; gap:5px; }
+  .bfx-browser-dots i { width:10px; height:10px; border-radius:50%; display:block; }
+  .bfx-browser-dots i:nth-child(1) { background:#ff5f57; }
+  .bfx-browser-dots i:nth-child(2) { background:#febc2e; }
+  .bfx-browser-dots i:nth-child(3) { background:#28c840; }
+  .bfx-browser-url {
+    flex:1; background:#2e2e2e; border:none; border-radius:4px; padding:4px 10px;
+    font-family:'Courier Prime',monospace; font-size:0.7rem; color:#8a9090; letter-spacing:0.5px;
+  }
+  .bfx-browser-viewport {
+    position:relative; height:220px; overflow:hidden; background:#1a1f2e;
+  }
+
+  .bfx-mock-scene {
+    position:absolute; inset:0; opacity:0; transition:opacity 0.4s;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .bfx-mock-scene.active { opacity:1; }
+
+  .bfx-mock-video {
+    width:100%; height:100%; object-fit:cover; object-position:center; display:block; background:#1a1f2e;
+  }
+
+  .bfx-scene-done { flex-direction:column; gap:14px; }
+  .bfx-mock-checkmark {
+    width:52px; height:52px; border-radius:50%; border:2.5px solid #28c840;
+    display:flex; align-items:center; justify-content:center; font-size:1.6rem; color:#28c840; opacity:0;
+  }
+  .bfx-mock-scene.active .bfx-mock-checkmark { animation:bfxCheckPop 0.5s ease 0.3s forwards; }
+  @keyframes bfxCheckPop {
+    0% { opacity:0; transform:scale(0.5); }
+    70% { transform:scale(1.15); }
+    100% { opacity:1; transform:scale(1); }
+  }
+  .bfx-mock-done-text {
+    font-family:'Rajdhani',sans-serif; font-weight:600; font-size:0.95rem; color:#c0c8d8; opacity:0;
+  }
+  .bfx-mock-scene.active .bfx-mock-done-text { animation:bfxFadeUp 0.4s ease 0.6s forwards; }
+  @keyframes bfxFadeUp {
+    from { opacity:0; transform:translateY(8px); }
+    to { opacity:1; transform:translateY(0); }
+  }
+
+  .bfx-step-list { list-style:none; padding:12px 0; flex:1; }
+  .bfx-step-item {
+    display:flex; align-items:flex-start; gap:14px; padding:14px 24px;
+    cursor:pointer; transition:background 0.2s; position:relative;
+  }
+  .bfx-step-item:hover, .bfx-step-item.active { background:#1e1e1e; }
+  .bfx-step-item.active::after {
+    content:''; position:absolute; right:0; top:0; bottom:0; width:3px; background:#6366f1;
+  }
+  .bfx-step-number {
+    width:28px; height:28px; border-radius:50%; background:#262626;
+    border:1.5px solid #555; display:flex; align-items:center; justify-content:center;
+    font-family:'Rajdhani',sans-serif; font-weight:700; font-size:0.8rem;
+    color:#8a9090; flex-shrink:0; transition:border-color 0.2s, color 0.2s, background 0.2s;
+  }
+  .bfx-step-item.active .bfx-step-number, .bfx-step-item:hover .bfx-step-number {
+    border-color:#6366f1; color:#6366f1; background:rgba(99,102,241,0.08);
+  }
+  /* Done step uses a fixed confirm-green accent, independent of --primary,
+     same semantic as the mock-scene checkmark this step activates. */
+  .bfx-step-number-done { border-color:#28c840; color:#28c840; }
+  .bfx-step-item[data-step="done"].active .bfx-step-number,
+  .bfx-step-item[data-step="done"]:hover .bfx-step-number {
+    border-color:#28c840; color:#28c840; background:rgba(40,200,64,0.08);
+  }
+  .bfx-step-item[data-step="done"].active::after { background:#28c840; }
+  .bfx-step-text { flex:1; padding-top:3px; }
+  .bfx-step-text strong {
+    display:block; font-family:'Rajdhani',sans-serif; font-weight:600; font-size:0.9rem;
+    color:#f4f5f4; margin-bottom:2px;
+  }
+  .bfx-step-text p { font-size:0.78rem; color:#8a9090; line-height:1.45; }
+
+  .bfx-drawer-footer {
+    background:#1e1e1e; border-top:1px solid #2e2e2e; padding:16px 24px;
+    display:flex; gap:10px; flex-shrink:0;
+  }
+  .bfx-drawer-footer a {
+    flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
+    padding:10px 16px; font-family:'Rajdhani',sans-serif; font-weight:600;
+    font-size:0.85rem; letter-spacing:0.5px; text-transform:uppercase;
+    text-decoration:none; border:none; border-radius:0; cursor:pointer;
+    transition:background 0.2s, box-shadow 0.2s;
+  }
+  .bfx-btn-launch { background:#6366f1; color:#fff; }
+  .bfx-btn-launch:hover { background:#4f46e5; box-shadow:0 0 14px rgba(99,102,241,0.25); }
+
+  .bfx-drawer-attr {
+    text-align:center; padding:8px; font-family:'Courier Prime',monospace;
+    font-size:0.55rem; color:#555; letter-spacing:1.5px; text-transform:uppercase;
+    background:#1e1e1e; flex-shrink:0;
+  }
+
+  @media (max-width:520px) { .bfx-drawer { width:100vw; } .bfx-browser-viewport { height:180px; } }
+  .bfx-btn-help { background:transparent; color:#8a9090; border:1px solid #555 !important; }
+  .bfx-btn-help:hover { border-color:#f4f5f4 !important; color:#f4f5f4; }
+
+/* == DEPLOY FIELD PANEL (secondary drawer) == */
+  .bfx-deploy-panel {
+    position:fixed; top:0; right:480px; width:420px; height:100vh;
+    background:#0d0d0d; z-index:10001; transform:translateX(40px);
+    opacity:0; pointer-events:none;
+    transition:transform 0.3s cubic-bezier(0.4,0,0.2,1), opacity 0.25s;
+    display:flex; flex-direction:column; overflow:hidden;
+    border-left:1px solid #2e2e2e; border-right:1px solid #2e2e2e;
+  }
+  .bfx-deploy-panel.open { transform:translateX(0); opacity:1; pointer-events:auto; }
+
+  .bfx-deploy-header {
+    padding:16px 20px; display:flex; align-items:center;
+    justify-content:space-between; border-bottom:1px solid #2e2e2e; flex-shrink:0;
+    background:#0d0d0d;
+  }
+  .bfx-deploy-htitle {
+    font-family:'Rajdhani',sans-serif; font-weight:700; font-size:1rem;
+    color:#f4f5f4; letter-spacing:0.3px;
+  }
+  .bfx-deploy-body {
+    flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:18px;
+  }
+  .bfx-deploy-section-label {
+    font-family:'Source Sans 3',sans-serif; font-size:0.72rem; font-weight:600;
+    color:#b0b0b0; margin-bottom:4px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .bfx-deploy-section-label .info-dot {
+    width:14px; height:14px; border-radius:50%; border:1.5px solid #555;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:0.48rem; color:#888; cursor:default; line-height:1;
+  }
+  .bfx-deploy-field-group { display:flex; flex-direction:column; gap:4px; }
+  .bfx-deploy-input-wrap {
+    display:flex; align-items:stretch;
+    background:#1a1a1a; border:1px solid #333; border-radius:6px;
+    overflow:hidden; transition:border-color 0.2s;
+  }
+  .bfx-deploy-input-wrap:hover { border-color:#555; }
+  .bfx-deploy-input {
+    flex:1; padding:10px 12px; min-height:38px;
+    font-family:'Source Sans 3',sans-serif; font-size:0.82rem;
+    color:#e0e0e0; line-height:1.45; word-break:break-word;
+    background:transparent; border:none; outline:none;
+    -webkit-user-select:text; user-select:text; cursor:text;
+  }
+  .bfx-deploy-input.tall { min-height:80px; max-height:160px; overflow-y:auto; }
+  .bfx-deploy-input.mono {
+    font-family:'Courier Prime',monospace; font-size:0.7rem;
+    white-space:pre-wrap; min-height:120px; max-height:220px; overflow-y:auto;
+  }
+  .bfx-deploy-char-count {
+    font-family:'Courier Prime',monospace; font-size:0.52rem; color:#555;
+    text-align:right; margin-top:2px; letter-spacing:0.5px;
+  }
+  .bfx-deploy-copy-btn {
+    flex-shrink:0; width:40px; display:flex; align-items:center; justify-content:center;
+    background:transparent; border:none; border-left:1px solid #333;
+    color:#666; cursor:pointer; transition:color 0.2s, background 0.2s;
+  }
+  .bfx-deploy-copy-btn:hover { color:#f4f5f4; background:rgba(255,255,255,0.05); }
+  .bfx-deploy-copy-btn.copied { color:#28c840; background:rgba(40,200,64,0.06); }
+  .bfx-deploy-copy-btn.copy-failed { color:#6366f1; background:rgba(99,102,241,0.06); }
+  .bfx-deploy-copy-btn svg { width:15px; height:15px; fill:currentColor; }
+
+  .bfx-deploy-model {
+    padding:10px 14px; background:#1a1a1a; border:1px solid #333; border-radius:6px;
+    display:flex; align-items:center; justify-content:space-between;
+    font-family:'Source Sans 3',sans-serif; font-size:0.82rem; color:#e0e0e0;
+  }
+  .bfx-deploy-model .arrow { color:#555; font-size:0.65rem; }
+
+  .bfx-deploy-chip-area {
+    padding:10px 12px; background:#1a1a1a; border:1px solid #333; border-radius:6px;
+    display:flex; flex-wrap:wrap; gap:8px; align-items:center; min-height:44px;
+  }
+  .bfx-deploy-chip {
+    display:inline-flex; align-items:center; gap:6px; padding:5px 10px;
+    background:#1e1e1e; border:1px solid #3a3a3a; border-radius:14px;
+    font-family:'Source Sans 3',sans-serif; font-size:0.7rem; color:#e0e0e0;
+  }
+  .bfx-deploy-chip .globe {
+    width:16px; height:16px; border-radius:50%; border:1.5px solid #28c840;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:0.4rem; color:#28c840; font-weight:700;
+  }
+  .bfx-deploy-chip .chip-x { color:#888; font-size:0.65rem; margin-left:2px; cursor:default; }
+
+  .bfx-deploy-knowledge-area {
+    padding:14px; background:#1a1a1a; border:1px solid #333; border-radius:6px;
+    color:#555; font-size:0.75rem; font-family:'Source Sans 3',sans-serif;
+    text-align:center;
+  }
+  .bfx-deploy-starter {
+    padding:10px 12px; background:#1a1a1a; border:1px solid #333; border-radius:6px;
+    font-family:'Source Sans 3',sans-serif; font-size:0.78rem; color:#555;
+    margin-bottom:6px;
+  }
+
+  @media (max-width:960px) {
+    .bfx-deploy-panel { right:0; top:auto; bottom:0; width:100vw; height:55vh;
+      transform:translateY(100%); border-left:none; border-top:1px solid #2e2e2e; }
+    .bfx-deploy-panel.open { transform:translateY(0); }
+  }
+
+  /* == REDUCED MOTION == */
+  @media (prefers-reduced-motion:reduce) {
+  .hero-slide-bg { transition:none !important; transform:none !important; }
+  .hero-slide { transition:opacity 0.01s !important; transform:none !important; }
+  .hero-carousel-track { transition:none !important; }
+
+    .card, .card:hover, .card:focus-visible {
+      transform:none; transition:box-shadow 0.2s ease, z-index 0s;
+    }
+    .bfx-drawer { transition:opacity 0.2s ease; transform:none; }
+    .bfx-drawer:not(.open) { opacity:0; visibility:hidden; }
+    .bfx-drawer.open { opacity:1; visibility:visible; }
+    .bfx-deploy-panel { transition:opacity 0.2s ease; transform:none; }
+    .bfx-deploy-panel:not(.open) { opacity:0; visibility:hidden; }
+    .bfx-deploy-panel.open { opacity:1; visibility:visible; }
+    .bfx-mock-scene.active .bfx-mock-checkmark,
+    .bfx-mock-scene.active .bfx-mock-done-text {
+      animation:none; opacity:1; transform:none;
+    }
+  }
+
+
+/* ===== Item hero-page template CSS (scoped under #app-frame; shared by every item instead of duplicated per page) ===== */
+#app-frame{
+    --bg: #141414;
+    --row-label: #e5e5e5;
+    --primary: #6366F1;
+    --card-w: 200px;
+    --card-h: 300px;
+    --gap: 8px;
+    --row-pad: 48px;
+    --surface: #232323;
+    --muted: rgba(255,255,255,0.72);
+    --hero-h: clamp(360px, 52vw, 560px);
+  }#app-frame *{ box-sizing: border-box; margin: 0; padding: 0; }#app-frame{ background: var(--bg); color: #fff; font-family: 'Segoe UI', system-ui, sans-serif; overflow-x: hidden; }#app-frame .back-strip{ padding: 16px var(--row-pad) 0; }#app-frame .back-link{ display: inline-flex; align-items: center; gap: 6px; color: var(--muted); text-decoration: none; font-size: 0.85rem; font-weight: 600; letter-spacing: 0.03em; }#app-frame .back-link:hover{ color: #fff; }#app-frame .hero{ position: relative; height: var(--hero-h); margin-top: 12px; }#app-frame .hero-media{ position: absolute; inset: 0; overflow: hidden; background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%); }#app-frame .hero-media img, #app-frame .hero-media video{ width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }#app-frame .hero-media.media-fallback::after{
+    content: '';
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 0 40px; font-size: 0.75rem; letter-spacing: 0.05em;
+    color: rgba(255,255,255,0.25); text-transform: uppercase;
+  }#app-frame .hero-scrim{
+    position: absolute; inset: 0;
+    background: linear-gradient(to top, var(--bg) 2%, rgba(20,20,20,0.35) 45%, rgba(20,20,20,0.15) 65%, transparent 85%),
+      linear-gradient(to right, rgba(20,20,20,0.85) 0%, rgba(20,20,20,0.35) 45%, transparent 75%);
+  }#app-frame .hero-content{ position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 var(--row-pad) 28px; max-width: 760px; }#app-frame .hero-eyebrow{ font-size: 0.8rem; font-weight: 600; letter-spacing: 0.08em; color: var(--muted); text-transform: uppercase; margin-bottom: 8px; }#app-frame .hero-title{ font-size: clamp(2.2rem, 6vw, 3.6rem); font-weight: 700; letter-spacing: 0.02em; line-height: 1.05; margin-bottom: 14px; }#app-frame .meta-row{ display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }#app-frame .meta-chip{ display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14); border-radius: 3px; padding: 5px 11px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.03em; color: var(--muted); }#app-frame .meta-chip .k{ color: rgba(255,255,255,0.5); font-weight: 400; }#app-frame .meta-chip.status{ background: rgba(99,102,241,0.18); border-color: var(--primary); color: #ff8f8d; }#app-frame .action-row{ display: flex; flex-wrap: wrap; gap: 12px; }#app-frame .btn{ display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px; font-family: inherit; font-size: 0.9rem; font-weight: 600; letter-spacing: 0.02em; border-radius: 3px; cursor: pointer; text-decoration: none; white-space: nowrap; }#app-frame .btn-primary{ background: var(--primary); color: #fff; border: 1px solid var(--primary); }#app-frame .btn-primary:hover{ background: #7c7ff2; }#app-frame .btn-secondary{ background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.35); }#app-frame .btn-secondary:hover{ border-color: #fff; background: rgba(255,255,255,0.06); }#app-frame .synopsis{ padding: 32px var(--row-pad) 8px; }#app-frame .synopsis .tagline{ font-size: 1.05rem; line-height: 1.5; color: #fff; margin-bottom: 26px; max-width: 760px; }#app-frame .long-desc-wrap{ display: grid; grid-template-columns: minmax(0, 640px) 240px; gap: 48px; align-items: start; }#app-frame .long-desc-wrap.no-rail{ grid-template-columns: minmax(0, 760px); }
+  @media (max-width: 860px) {#app-frame .long-desc-wrap{ grid-template-columns: 1fr; gap: 24px; }#app-frame .fact-rail{ flex-direction: row; flex-wrap: wrap; }#app-frame .fact-block{ flex: 1 1 220px; } }#app-frame .long-desc p{ font-size: 0.95rem; line-height: 1.7; color: var(--muted); margin-bottom: 22px; }#app-frame .long-desc p:last-child{ margin-bottom: 0; }#app-frame .long-desc p.lede{ color: #f4f4f4; font-size: 1.02rem; }#app-frame .long-desc p.lede::first-letter{ float: left; font-weight: 700; font-size: 3.4rem; line-height: 0.8; color: var(--primary); padding: 5px 9px 0 0; }#app-frame .long-desc p:not(.lede){ position: relative; padding-left: 18px; }#app-frame .long-desc p:not(.lede)::before{ content: ''; position: absolute; left: 0; top: 7px; width: 3px; height: 18px; background: var(--primary); }#app-frame .fact-rail{ display: flex; flex-direction: column; gap: 20px; }#app-frame .fact-block{ background: var(--surface); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 16px 18px; }#app-frame .fact-block h5{ font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: rgba(255,255,255,0.45); margin-bottom: 12px; font-weight: 600; }#app-frame .signal-chips{ display: flex; flex-wrap: wrap; gap: 6px; }#app-frame .signal-chip{ font-size: 0.7rem; font-weight: 600; letter-spacing: 0.01em; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); border-radius: 3px; padding: 4px 8px; color: var(--muted); }#app-frame .tabs-section{ padding: 28px var(--row-pad) 8px; }#app-frame .tab-bar{ display: flex; gap: 4px; border-bottom: 1px solid rgba(255,255,255,0.12); margin-bottom: 22px; flex-wrap: wrap; }#app-frame .tab-btn{ background: none; border: none; font-family: inherit; color: var(--muted); font-size: 0.9rem; font-weight: 600; letter-spacing: 0.02em; padding: 10px 4px; margin-right: 26px; cursor: pointer; border-bottom: 2px solid transparent; position: relative; top: 1px; }#app-frame .tab-btn.active{ color: #fff; border-bottom-color: var(--primary); }#app-frame .tab-panel{ display: none; max-width: 760px; }#app-frame .tab-panel.active{ display: block; }#app-frame .md-pane{ background: #0e0e0e; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 18px 20px; font-family: 'Courier New', monospace; font-size: 0.78rem; line-height: 1.6; color: rgba(255,255,255,0.7); white-space: pre-wrap; }#app-frame .md-note{ font-size: 0.78rem; color: rgba(255,255,255,0.4); margin-top: 10px; }#app-frame .flag-note{ font-size: 0.78rem; color: #ff8f8d; margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); }#app-frame .flag-note b{ color: #ff8f8d; }#app-frame .row{ margin: 34px 0 28px; }#app-frame .row-title{ font-size: 1.2rem; font-weight: 600; color: var(--row-label); padding: 0 var(--row-pad); margin-bottom: 10px; letter-spacing: 0.03em; }#app-frame .ribbon-wrap{ position: relative; }#app-frame .ribbon-wrap::before, #app-frame .ribbon-wrap::after{ content: ''; position: absolute; top: 0; bottom: 0; width: var(--row-pad); z-index: 2; pointer-events: none; }#app-frame .ribbon-wrap::before{ left: 0; background: linear-gradient(to right, var(--bg), transparent); }#app-frame .ribbon-wrap::after{ right: 0; background: linear-gradient(to left, var(--bg), transparent); }#app-frame .track{ display: flex; gap: var(--gap); padding: 12px var(--row-pad) 20px; overflow-x: auto; overflow-y: visible; scroll-behavior: smooth; scrollbar-width: none; }#app-frame .track::-webkit-scrollbar{ display: none; }#app-frame .card{ flex: 0 0 var(--card-w); width: var(--card-w); height: var(--card-h); position: relative; overflow: hidden; cursor: pointer; border-radius: 4px; display: block; text-decoration: none; color: inherit; background: #2a2a2a; transform-origin: bottom center; transition: transform 0.25s ease, box-shadow 0.25s ease, z-index 0s; z-index: 1; }#app-frame .card:hover{ transform: scale(1.12); box-shadow: 0 12px 40px rgba(0,0,0,0.7); z-index: 20; }#app-frame .card img{ position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top center; display: block; }#app-frame .card-overlay{ position: absolute; inset: 0; background: linear-gradient(to bottom, transparent 45%, rgba(0,0,0,0.85) 100%); z-index: 3; }#app-frame .card-content{ position: absolute; bottom: 0; left: 0; right: 0; padding: 10px 12px 13px; z-index: 4; }#app-frame .card-title{ font-size: 1rem; font-weight: 600; margin-bottom: 6px; }#app-frame .card-desc{ font-size: 0.72rem; font-weight: 400; color: rgba(255,255,255,0.72); line-height: 1.3; }#app-frame footer.note{ padding: 24px var(--row-pad) 40px; font-size: 0.72rem; color: rgba(255,255,255,0.3); border-top: 1px solid rgba(255,255,255,0.08); margin-top: 10px; }#app-frame{ --tool-ic: #36454F; }#app-frame.icons-light{ --tool-ic: #d7dde2; }#app-frame .tool-rail{ position: absolute; right: 30px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 16px; z-index: 3; }#app-frame .tool{ position: relative; display: flex; }#app-frame .tool-ic{ width: 32px; height: 32px; max-height: 3.6rem; color: var(--tool-ic); opacity: 0.92; transition: transform .15s ease, opacity .15s; }#app-frame .tool:hover .tool-ic{ transform: scale(1.15); opacity: 1; }#app-frame .tool-tip{ position: absolute; right: calc(100% + 10px); top: 50%; transform: translateY(-50%); background: rgba(10,12,14,0.92); color: #fff; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.03em; padding: 4px 9px; border-radius: 3px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .15s; }#app-frame .tool:hover .tool-tip{ opacity: 1; }#app-frame.icons-chip .tool-rail{ background: rgba(255,255,255,0.72); backdrop-filter: blur(6px); padding: 14px 9px; border-radius: 999px; box-shadow: 0 2px 10px rgba(0,0,0,0.35); }#app-frame .toolbox-item{ display: flex; align-items: center; gap: 10px; padding: 6px 0; font-size: 0.78rem; font-weight: 600; color: var(--muted); }#app-frame .toolbox-item .tool-ic{ width: 20px; height: 20px; flex: none; }#app-frame .inout-strip{display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:34px var(--row-pad) 0;}
+  @media(max-width:700px){#app-frame .inout-strip{grid-template-columns:1fr;}}#app-frame .io-block{background:linear-gradient(135deg, rgba(99,102,241,0.16), var(--surface) 55%);border:1px solid rgba(99,102,241,0.45);border-left:8px solid var(--primary);border-radius:6px;padding:24px 28px;}#app-frame .io-label{font-size:1.15rem;font-weight:800;letter-spacing:0.16em;color:#fff;margin-bottom:10px;text-transform:uppercase;}#app-frame .io-label .io-slash{color:var(--primary);}#app-frame .io-text{font-size:1.15rem;line-height:1.6;color:#f4f4f4;}#app-frame .io-hover{display:none;margin-top:14px;}#app-frame .io-block:hover .io-hover{display:block;}#app-frame .io-hover img, #app-frame .io-hover video{width:100%;border-radius:4px;display:block;}#app-frame .audio-overview{ position: absolute; top: 16px; right: var(--row-pad); z-index: 4; width: 260px; background: rgba(20,20,20,0.88); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(99,102,241,0.35); border-radius: 6px; padding: 14px 16px; display: flex; align-items: center; gap: 14px; overflow: hidden; cursor: pointer; transition: border-color 0.15s ease; }#app-frame .audio-overview:hover{ border-color: rgba(99,102,241,0.6); }#app-frame .audio-overview::before{ content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--primary); }#app-frame .audio-play-btn{ flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%; background: var(--primary); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; position: relative; transition: transform 0.2s ease, box-shadow 0.2s ease; box-shadow: 0 2px 12px rgba(99,102,241,0.35); }#app-frame .audio-play-btn:hover{ transform: scale(1.08); box-shadow: 0 4px 18px rgba(99,102,241,0.5); background: #7c7ff2; }#app-frame .audio-play-btn:focus-visible{ outline: 2px solid #fff; outline-offset: 3px; }#app-frame .audio-play-btn::after{ content: ''; position: absolute; inset: -5px; border-radius: 50%; border: 1.5px solid rgba(99,102,241,0.3); animation: audio-pulse 2s ease-in-out infinite; }#app-frame .audio-play-icon{ width: 0; height: 0; border-style: solid; border-width: 8px 0 8px 14px; border-color: transparent transparent transparent #fff; margin-left: 2px; }#app-frame .audio-info{ flex: 1 1 auto; min-width: 0; }#app-frame .audio-label{ font-size: 0.62rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: rgba(255,255,255,0.4); margin-bottom: 3px; }#app-frame .audio-title{ font-size: 0.82rem; font-weight: 700; color: #fff; letter-spacing: 0.01em; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }#app-frame .audio-meta{ display: flex; align-items: center; gap: 5px; font-size: 0.68rem; font-weight: 600; color: rgba(255,255,255,0.5); }#app-frame .audio-meta svg{ width: 11px; height: 11px; }#app-frame .audio-progress{ position: absolute; bottom: 0; left: 0; right: 0; height: 2px; background: rgba(255,255,255,0.06); }#app-frame .audio-progress-bar{ height: 100%; width: 0%; background: var(--primary); border-radius: 0 2px 2px 0; transition: width 0.3s linear; }.doc-overlay{ position:fixed; inset:0; background:rgba(10,10,10,0.88); z-index:9999; display:none; flex-direction:column; }.doc-overlay.on{ display:flex; }.doc-bar{ display:flex; align-items:center; gap:14px; padding:10px 16px; background:#1b1b1b; border-bottom:2px solid var(--primary, #6366F1); }.doc-bar span{ color:#fff; font-weight:700; font-size:0.9rem; flex:1; }.doc-bar a, .doc-bar button{ color:#fff; background:none; border:1px solid rgba(255,255,255,0.35); border-radius:3px; padding:6px 12px; font-size:0.8rem; font-weight:600; cursor:pointer; text-decoration:none; font-family:inherit; }.doc-bar a:hover, .doc-bar button:hover{ border-color:#fff; }.doc-overlay iframe{ flex:1; border:0; background:#fff; }#app-frame{
+    --news-bg: #141414;
+    --news-primary: #6366F1;
+    --news-surface: #232323;
+    --news-muted: rgba(255,255,255,0.72);
+    --news-border: rgba(255,255,255,0.1);
+    --news-row-pad: 48px;
+  }#app-frame .news-wrap *{ box-sizing: border-box; }#app-frame .news-wrap{
+    background: var(--news-bg); color: #fff;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100%;
+  }#app-frame .news-wrap .back-strip{ padding: 16px var(--news-row-pad) 0; position: sticky; top: 0; z-index: 10; background: var(--news-bg); }#app-frame .news-wrap .back-link{
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--news-muted); text-decoration: none;
+    font-size: 0.85rem; font-weight: 600; letter-spacing: 0.03em;
+    cursor: pointer;
+  }#app-frame .news-wrap .back-link:hover{ color: #fff; }#app-frame .news-wrap .page{ display: none; }#app-frame .news-wrap .page.active{ display: block; }#app-frame .news-wrap .news-landing{ padding: 20px var(--news-row-pad) 60px; }#app-frame .news-wrap .news-header{ margin-bottom: 32px; }#app-frame .news-wrap .news-header h1{ font-size: 1.6rem; margin-bottom: 6px; }#app-frame .news-wrap .news-header p{ color: rgba(255,255,255,0.6); font-size: 0.9rem; }#app-frame .news-wrap .news-featured{
+    display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+    background: var(--news-surface); border: 1px solid var(--news-border);
+    border-radius: 4px; overflow: hidden; margin-bottom: 28px;
+    cursor: pointer; text-decoration: none; color: inherit;
+    transition: border-color 0.2s;
+  }#app-frame .news-wrap .news-featured:hover{ border-color: var(--news-primary); }#app-frame .news-wrap .news-featured .feat-img{
+    min-height: 320px; position: relative; overflow: hidden;
+    background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+  }#app-frame .news-wrap .news-featured .feat-body{ padding: 32px 28px; display: flex; flex-direction: column; justify-content: center; }#app-frame .news-wrap .news-featured .feat-tag{
+    display: inline-block; font-size: 0.68rem; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--news-primary); margin-bottom: 12px;
+  }#app-frame .news-wrap .news-featured .feat-title{ font-size: 1.5rem; font-weight: 700; line-height: 1.2; margin-bottom: 14px; }#app-frame .news-wrap .news-featured .feat-dek{ font-size: 0.92rem; line-height: 1.6; color: var(--news-muted); margin-bottom: 18px; }#app-frame .news-wrap .news-featured .feat-date{ font-size: 0.75rem; color: rgba(255,255,255,0.4); }
+
+  @media (max-width: 860px) {#app-frame .news-wrap .news-featured{ grid-template-columns: 1fr; }#app-frame .news-wrap .news-featured .feat-img{ min-height: 200px; }
+  }#app-frame .news-wrap .news-grid{ display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }#app-frame .news-wrap .news-card{
+    background: var(--news-surface); border: 1px solid var(--news-border);
+    border-radius: 4px; overflow: hidden; cursor: pointer;
+    text-decoration: none; color: inherit; transition: border-color 0.2s;
+    display: flex; flex-direction: column;
+  }#app-frame .news-wrap .news-card:hover{ border-color: var(--news-primary); }#app-frame .news-wrap .news-card .card-img{
+    height: 180px; position: relative; overflow: hidden;
+    background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+  }#app-frame .news-wrap .news-card .card-body{ padding: 20px 18px; flex: 1; display: flex; flex-direction: column; }#app-frame .news-wrap .news-card .card-tag{
+    display: inline-block; font-size: 0.65rem; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--news-primary); margin-bottom: 8px;
+  }#app-frame .news-wrap .news-card .card-title{ font-size: 1.05rem; font-weight: 700; line-height: 1.25; margin-bottom: 10px; }#app-frame .news-wrap .news-card .card-dek{ font-size: 0.82rem; line-height: 1.55; color: var(--news-muted); margin-bottom: 14px; flex: 1; }#app-frame .news-wrap .news-card .card-date{ font-size: 0.7rem; color: rgba(255,255,255,0.4); }#app-frame .news-wrap .img-placeholder{
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    padding: 16px; gap: 6px;
+    background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+  }#app-frame .news-wrap .img-placeholder .img-num{
+    background: var(--news-primary); color: #fff; font-weight: 700;
+    font-size: 0.85rem; padding: 4px 12px; border-radius: 3px;
+    letter-spacing: 0.05em;
+  }#app-frame .news-wrap .img-placeholder .img-desc{
+    font-size: 0.7rem; color: rgba(255,255,255,0.4);
+    line-height: 1.4; max-width: 220px;
+  }#app-frame .news-wrap .article-page{ padding: 0; }#app-frame .news-wrap .article-hero{
+    position: relative; height: clamp(240px, 36vw, 400px);
+    margin-top: 12px; overflow: hidden;
+    background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+  }#app-frame .news-wrap .article-hero .img-placeholder{ font-size: 1rem; }#app-frame .news-wrap .article-scrim{
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(to top, var(--news-bg) 2%, rgba(20,20,20,0.35) 45%, rgba(20,20,20,0.15) 65%, transparent 85%),
+      linear-gradient(to right, rgba(20,20,20,0.85) 0%, rgba(20,20,20,0.35) 45%, transparent 75%);
+  }#app-frame .news-wrap .article-hero-content{
+    position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;
+    justify-content: flex-end; padding: 0 var(--news-row-pad) 28px; max-width: 760px;
+  }#app-frame .news-wrap .article-eyebrow{
+    font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--news-primary); margin-bottom: 10px;
+  }#app-frame .news-wrap .article-title{
+    font-size: clamp(1.8rem, 5vw, 2.8rem); font-weight: 700;
+    letter-spacing: 0.02em; line-height: 1.1; margin-bottom: 10px;
+  }#app-frame .news-wrap .article-dek{
+    font-size: 0.95rem; line-height: 1.5; color: var(--news-muted);
+    max-width: 620px; margin-bottom: 14px;
+  }#app-frame .news-wrap .article-meta{
+    font-size: 0.78rem; color: rgba(255,255,255,0.45);
+    display: flex; gap: 16px; flex-wrap: wrap;
+  }#app-frame .news-wrap .article-body{
+    padding: 36px var(--news-row-pad) 60px; max-width: 760px;
+  }#app-frame .news-wrap .article-body p{
+    font-size: 0.92rem; line-height: 1.75; color: var(--news-muted); margin-bottom: 22px;
+  }#app-frame .news-wrap .article-body p:last-child{ margin-bottom: 0; }#app-frame .news-wrap .article-body strong, #app-frame .news-wrap .article-body b{ color: #fff; font-weight: 600; }#app-frame .news-wrap .article-body .inline-img{
+    position: relative; width: 100%; height: 260px; margin: 28px 0;
+    border-radius: 4px; overflow: hidden;
+    background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+  }#app-frame .news-wrap .article-tags{
+    padding: 0 var(--news-row-pad) 40px; max-width: 760px;
+    display: flex; gap: 8px; flex-wrap: wrap;
+  }#app-frame .news-wrap .article-tags .tag{
+    font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em;
+    background: rgba(255,255,255,0.08); border: 1px solid var(--news-border);
+    border-radius: 3px; padding: 4px 10px; color: rgba(255,255,255,0.5);
+  }#app-frame .news-wrap .article-footer{
+    padding: 20px var(--news-row-pad) 40px;
+    font-size: 0.72rem; color: rgba(255,255,255,0.3);
+    border-top: 1px solid rgba(255,255,255,0.08);
+    margin-top: 20px; line-height: 1.7; max-width: 760px;
+  }#app-frame *{ box-sizing: border-box; margin: 0; padding: 0; }#app-frame{
+    background: var(--bg);
+    color: #fff;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    overflow-x: hidden;
+  }#app-frame .back-strip{ padding: 16px var(--row-pad) 0; }#app-frame .back-link{
+    display: inline-flex; align-items: center; gap: 6px;
+    color: var(--muted); text-decoration: none;
+    font-size: 0.85rem; font-weight: 600; letter-spacing: 0.03em;
+  }#app-frame .back-link:hover{ color: #fff; }#app-frame .hero{ position: relative; height: var(--hero-h); margin-top: 12px; }#app-frame .hero-media{
+    position: absolute; inset: 0; overflow: hidden;
+    background: linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%);
+  }#app-frame .hero-media img{ width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }#app-frame .hero-media.media-fallback::after{
+    content: '';
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 0 40px; font-size: 0.75rem; letter-spacing: 0.05em;
+    color: rgba(255,255,255,0.25); text-transform: uppercase;
+  }#app-frame .hero-scrim{
+    position: absolute; inset: 0;
+    background:
+      linear-gradient(to top, var(--bg) 2%, rgba(20,20,20,0.35) 45%, rgba(20,20,20,0.15) 65%, transparent 85%),
+      linear-gradient(to right, rgba(20,20,20,0.85) 0%, rgba(20,20,20,0.35) 45%, transparent 75%);
+  }#app-frame .hero-content{
+    position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column;
+    justify-content: flex-end; padding: 0 var(--row-pad) 28px; max-width: 760px;
+  }#app-frame .hero-eyebrow{
+    font-size: 0.8rem; font-weight: 600; letter-spacing: 0.08em;
+    color: var(--muted); text-transform: uppercase; margin-bottom: 8px;
+  }#app-frame .hero-title{
+    font-size: clamp(2.2rem, 6vw, 3.6rem); font-weight: 700;
+    letter-spacing: 0.02em; line-height: 1.05; margin-bottom: 14px;
+  }#app-frame .hero-title .accent{ color: var(--primary); }#app-frame .meta-row{ display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }#app-frame .meta-chip{
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 3px; padding: 5px 11px; font-size: 0.75rem; font-weight: 600;
+    letter-spacing: 0.03em; color: var(--muted);
+  }#app-frame .meta-chip .k{ color: rgba(255,255,255,0.5); font-weight: 400; }#app-frame .action-row{ display: flex; flex-wrap: wrap; gap: 12px; }#app-frame .btn{
+    display: inline-flex; align-items: center; gap: 8px; padding: 12px 22px;
+    font-family: inherit; font-size: 0.9rem; font-weight: 600; letter-spacing: 0.02em;
+    border-radius: 3px; cursor: pointer; text-decoration: none; white-space: nowrap;
+  }#app-frame .btn-primary{ background: var(--primary); color: #fff; border: 1px solid var(--primary); }#app-frame .btn-primary:hover{ background: #7c7ff2; }#app-frame .btn-secondary{ background: transparent; color: #fff; border: 1px solid rgba(255,255,255,0.35); }#app-frame .btn-secondary:hover{ border-color: #fff; background: rgba(255,255,255,0.06); }#app-frame .synopsis{ padding: 32px var(--row-pad) 8px; }#app-frame .synopsis .tagline{ font-size: 1.05rem; line-height: 1.5; color: #fff; margin-bottom: 26px; max-width: 760px; }#app-frame .steps{ padding: 8px var(--row-pad) 8px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; max-width: 1100px; }
+  @media (max-width: 860px) {#app-frame .steps{ grid-template-columns: 1fr; } }#app-frame .step{
+    background: var(--surface); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px;
+    padding: 22px 22px 20px; position: relative; border-top: 3px solid var(--primary);
+  }#app-frame .step .step-num{
+    font-size: 2.2rem; font-weight: 700; color: var(--primary); line-height: 1; margin-bottom: 10px;
+  }#app-frame .step h3{ font-size: 1.05rem; font-weight: 700; letter-spacing: 0.02em; margin-bottom: 10px; }#app-frame .step p{ font-size: 0.88rem; line-height: 1.6; color: var(--muted); margin-bottom: 10px; }#app-frame .step p:last-child{ margin-bottom: 0; }#app-frame .step b{ color: #fff; }#app-frame .inline-link{
+    color: var(--primary); text-decoration: none; font-weight: 600;
+    border-bottom: 1px solid rgba(99,102,241,0.4); cursor: pointer; white-space: nowrap;
+  }#app-frame .inline-link:hover{ border-bottom-color: var(--primary); }#app-frame .tabs-section{ padding: 34px var(--row-pad) 8px; }#app-frame .tab-bar{ display: flex; gap: 4px; border-bottom: 1px solid rgba(255,255,255,0.12); margin-bottom: 22px; flex-wrap: wrap; }#app-frame .tab-btn{
+    background: none; border: none; font-family: inherit; color: var(--muted);
+    font-size: 0.9rem; font-weight: 600; letter-spacing: 0.02em; padding: 10px 4px;
+    margin-right: 26px; cursor: pointer; border-bottom: 2px solid transparent;
+    position: relative; top: 1px;
+  }#app-frame .tab-btn.active{ color: #fff; border-bottom-color: var(--primary); }#app-frame .tab-panel{ display: none; max-width: 760px; }#app-frame .tab-panel.active{ display: block; }#app-frame .tab-intro{ font-size: 0.85rem; line-height: 1.6; color: var(--muted); margin: -10px 0 22px; max-width: 760px; }#app-frame .tab-intro strong{ color: #fff; }#app-frame .md-toolbar{ display: flex; justify-content: flex-end; margin-bottom: 10px; }#app-frame .md-copy-btn{ font-size: 0.78rem; padding: 8px 16px; }#app-frame .md-pane.md-collapsed{ max-height: 320px; overflow: hidden; position: relative; }#app-frame .md-pane.md-collapsed::after{ content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 64px; background: linear-gradient(180deg, rgba(14,14,14,0) 0%, #0e0e0e 90%); }#app-frame .md-expand-btn{ display: block; margin: 12px auto 0; background: none; border: 1px solid rgba(255,255,255,0.2); color: var(--muted); font-family: inherit; font-size: 0.78rem; font-weight: 600; padding: 8px 18px; border-radius: 4px; cursor: pointer; }#app-frame .md-expand-btn:hover{ color: #fff; border-color: rgba(255,255,255,0.4); }#app-frame .sample-outputs{ display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; max-width: 760px; }#app-frame .sample-output-card{ display: block; text-decoration: none; color: inherit; background: #0e0e0e; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; transition: border-color 0.2s; }#app-frame .sample-output-card:hover{ border-color: var(--primary); }#app-frame .sample-output-img{ display: block; width: 100%; aspect-ratio: 16/10; object-fit: cover; background: #1a1a1a; }#app-frame .sample-output-card.no-img .sample-output-img{ display: none; }#app-frame .sample-output-label{ padding: 10px 12px; font-size: 0.8rem; font-weight: 600; color: #fff; }#app-frame .phase-list{ list-style: none; }#app-frame .phase-list li{
+    display: flex; gap: 14px; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.08);
+    font-size: 0.88rem; line-height: 1.5; color: var(--muted);
+  }#app-frame .phase-list .num{ flex: 0 0 auto; color: var(--primary); font-weight: 700; }#app-frame .phase-list b{ color: #fff; }#app-frame footer.note{
+    padding: 24px var(--row-pad) 40px; font-size: 0.72rem; color: rgba(255,255,255,0.3);
+    border-top: 1px solid rgba(255,255,255,0.08); margin-top: 34px; line-height: 1.7;
+  }
+
+#app-frame .page-learn .hero { height: clamp(300px, 42vw, 460px); }
+</style>
+
+</head>
+<script>document.documentElement.className='js';</script>
+<body>
+<div class="topbar">
+  <span class="brand-sub">[SITE NAME]</span>
+  <nav class="navlinks">
+    <a href="#home" id="nav-home" data-hash="#home">&larr; Back to Gallery</a>
+    <a href="#news" id="nav-news" data-hash="#news">News</a>
+    <a href="#learn" id="nav-learn" data-hash="#learn">Getting Started</a>
+  </nav>
+  <span class="status" id="status"><span class="chip-static">STATIC MODE - scripts blocked by host; cards open live pages</span><span class="chip-live" id="live-chip">ENGINE OK</span></span>
+</div>
+<div id="frame-wrap">
+  <div id="home">
+    <div class="hero-bg"></div>
+    <div class="home-content">
+      <!-- === FEATURED HERO CAROUSEL === -->
+      <div class="hero-carousel" id="hero-carousel">
+        <div class="hero-carousel-track">
+          <a href="#example1" data-hash="#example1" class="hero-slide active" tabindex="0">
+            <img src="SiteAssets/YOUR-HERO-IMAGE-1.jpg" class="hero-slide-bg" alt="" loading="eager" onerror="this.style.display='none';">
+            <div class="hero-slide-overlay"></div>
+            <div class="hero-slide-content">
+              <div class="hero-slide-name">Example Item One [EXAMPLE1]</div>
+              <div class="hero-slide-hook">Replace this hook with one punchy sentence about the item.</div>
+              <div class="hero-slide-desc">Replace this with a slightly longer description shown under the hook.</div>
+              <span class="hero-slide-cta">View Item</span>
+            </div>
+          </a>
+          <a href="#example2" data-hash="#example2" class="hero-slide" tabindex="-1">
+            <img src="SiteAssets/YOUR-HERO-IMAGE-2.jpg" class="hero-slide-bg" alt="" loading="lazy" onerror="this.style.display='none';">
+            <div class="hero-slide-overlay"></div>
+            <div class="hero-slide-content">
+              <div class="hero-slide-name">Example Item Two [EXAMPLE2]</div>
+              <div class="hero-slide-hook">A second example, so the carousel has something to page between.</div>
+              <div class="hero-slide-desc">This item's hero page also demonstrates the optional Sample Outputs tab.</div>
+              <span class="hero-slide-cta">View Item</span>
+            </div>
+          </a>
+        </div>
+        <div class="hero-indicators" id="hero-indicators">
+          <button class="hero-dot active" data-slide="0" aria-label="Slide 1: Example Item One"></button>
+          <button class="hero-dot" data-slide="1" aria-label="Slide 2: Example Item Two"></button>
+        </div>
+      </div>
+
+    <!-- ================= CARD SWITCHBOARD =================
+         Every card below carries data-show="yes" or data-show="no".
+         Find the item, change no to yes (or yes to no), save. That's the whole toggle.
+         Default: cards without a real image ship switched off.
+         ==================================================== -->
+
+      <!-- === EXAMPLE ROW === -->
+      <div class="agent-row">
+        <div class="row-header"><h2>Example Row</h2></div>
+        <div class="track-wrap"><div class="scroll-track">
+          <!-- DISPLAY-CARD [Example Item One [EXAMPLE1]] data-show=yes -->
+          <a href="#example1" data-hash="#example1" data-show="yes" class="card has-media"><div class="card-inner"><img src="SiteAssets/YOUR-CARD-IMAGE-1.jpg" class="default-img" alt="Example Item One [EXAMPLE1]" loading="lazy" onerror="this.parentElement.parentElement.classList.remove('has-media');this.remove();"><img src="SiteAssets/YOUR-CARD-HOVER-1.gif" class="hover-img" alt="" loading="lazy" onerror="this.remove();"><div class="card-overlay"></div><div class="card-content"><div class="card-title">Example Item One [EXAMPLE1]</div><div class="card-desc">Replace this with a one or two sentence description. It's clamped to 3 lines until hover, then expands.</div></div></div></a>
+          <!-- DISPLAY-CARD [Example Item Two [EXAMPLE2]] data-show=yes -->
+          <a href="#example2" data-hash="#example2" data-show="yes" class="card"><div class="card-inner"><div class="card-overlay"></div><div class="card-content"><div class="card-title">Example Item Two [EXAMPLE2]</div><div class="card-desc">This card demonstrates the no-image state: a card without the has-media class just shows its title and description over the overlay, no image markup needed.</div></div></div></a>
+        </div><button class="row-arrow row-arrow--prev" aria-label="Scroll left">&#10094;</button><button class="row-arrow row-arrow--next" aria-label="Scroll right">&#10095;</button></div>
+      </div>
+
+      <!-- === WORKFLOWS === -->
+      <div class="agent-row">
+        <div class="row-header"><h2>Workflows</h2></div>
+        <div class="wf-row">
+          <div class="wf-grid">
+            <div class="card-wf"><div class="wf-title">Example Bundle: Item One + Item Two</div><p class="wf-desc">A workflow card is a static (non-carousel) card that groups two or more items which work together, with chips linking to each item's own page. Replace this text with a description of a real multi-item workflow, or delete this card if you don't need one.</p><div class="wf-chips"><a href="#example1" data-hash="#example1">EXAMPLE1</a><a href="#example2" data-hash="#example2">EXAMPLE2</a></div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+  <div id="app-frame"></div>
+<!-- shared icon sprite: was duplicated in full on every hero page; written once here and referenced via <use> -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true"><symbol id="ic-Audit" viewBox="0 0 512 512"><g id="Page-1" fill-rule="evenodd"><g id="icon" transform="translate(42.6653 42.6667)"><path d="M341.335 42.6667 426.668 128 426.668 384 0.00141678 384 1.36004e-14 151.33C10.0983 166.682 24.2154 184.437 42.6673 199.495L42.6681 341.333 384.001 341.333 384.001 138.667 330.668 85.3333 290.932 85.3351C285.493 74.6818 276.348 58.8453 263.198 42.6667L341.335 42.6667ZM341.335 277.333 341.335 298.667 85.3347 298.667 85.3347 277.333 341.335 277.333ZM341.335 213.333 341.335 234.667 213.335 234.667 213.335 214.296C213.876 213.978 214.414 213.657 214.95 213.333L341.335 213.333ZM138.668 7.10543e-15C235.735 7.10543e-15 277.335 106.667 277.335 106.667 277.335 106.667 235.735 213.333 138.668 213.333 41.6014 213.333 0.00141678 106.667 0.00141678 106.667 0.00141678 106.667 41.6014 7.10543e-15 138.668 7.10543e-15ZM138.668 26.6667C77.3774 26.6667 41.6014 83.7333 30.3694 106.667 41.6014 129.6 77.3774 186.667 138.668 186.667 199.959 186.667 235.735 129.6 246.967 106.667 235.735 83.7333 199.959 26.6667 138.668 26.6667ZM138.668 60C165.472 60 187.201 80.8934 187.201 106.667 187.201 132.44 165.472 153.333 138.668 153.333 111.864 153.333 90.1348 132.44 90.1348 106.667 90.1348 80.8934 111.864 60 138.668 60ZM138.668 86.6667C127.181 86.6667 117.868 95.621 117.868 106.667 117.868 117.712 127.181 126.667 138.668 126.667 150.156 126.667 159.468 117.712 159.468 106.667 159.468 95.621 150.156 86.6667 138.668 86.6667Z" id="Combined-Shape"/></g></g></symbol><symbol id="ic-Compliance" viewBox="0 0 24 24"><g id="compliance"><g><path d="M22 24 2 24 2 2 7 2 7 0 17 0 17 2 22 2 22 24ZM4 22 20 22 20 4 17 4 17 7 7 7 7 4 4 4 4 22ZM9 5 15 5 15 2 9 2 9 5ZM11 18.4 7.3 14.7 8.7 13.3 11 15.6 16.3 10.3 17.7 11.7 11 18.4Z"/></g></g></symbol><symbol id="ic-Copy" viewBox="0 0 24 24"><path d="M17.0998 2 12.8998 2C9.81668 2 8.37074 3.09409 8.06951 5.73901 8.00649 6.29235 8.46476 6.75 9.02167 6.75L11.0998 6.75C15.2998 6.75 17.2498 8.7 17.2498 12.9L17.2498 14.9781C17.2498 15.535 17.7074 15.9933 18.2608 15.9303 20.9057 15.629 21.9998 14.1831 21.9998 11.1L21.9998 6.9C21.9998 3.4 20.5998 2 17.0998 2Z"/><path d="M11.1 8 6.9 8C3.4 8 2 9.4 2 12.9L2 17.1C2 20.6 3.4 22 6.9 22L11.1 22C14.6 22 16 20.6 16 17.1L16 12.9C16 9.4 14.6 8 11.1 8ZM12.29 13.65 8.58 17.36C8.44 17.5 8.26 17.57 8.07 17.57 7.88 17.57 7.7 17.5 7.56 17.36L5.7 15.5C5.42 15.22 5.42 14.77 5.7 14.49 5.98 14.21 6.43 14.21 6.71 14.49L8.06 15.84 11.27 12.63C11.55 12.35 12 12.35 12.28 12.63 12.56 12.91 12.57 13.37 12.29 13.65Z"/></symbol><symbol id="ic-DOCX" viewBox="0 0 24 24"><path d="M19.2006 6.667 12.343 0 2.74324 0C2.01635 0.0021103 1.31986 0.283775 0.805874 0.783477 0.291887 1.28318 0.00217063 1.96032 0 2.667L0 21.333C0.00217063 22.0397 0.291887 22.7168 0.805874 23.2165 1.31986 23.7162 2.01635 23.9979 2.74324 24L16.4574 24C17.1843 23.9979 17.8808 23.7162 18.3947 23.2165 18.9087 22.7168 19.1984 22.0397 19.2006 21.333L19.2006 20 24.001 20 24.001 9.333 19.2006 9.333 19.2006 6.667ZM11.657 2.16 16.9778 7.333 11.657 7.333 11.657 2.16ZM22.6289 10.667 22.6289 18.667 6.17152 18.667 6.17152 10.667 22.6289 10.667Z"/><path d="M12.2941 14.6196C12.2941 15.4716 12.051 16.1241 11.5648 16.5773 11.081 17.0304 10.3813 17.257 9.46558 17.257L8 17.257 8 12.0814 9.62488 12.0814C10.4698 12.0814 11.1259 12.3044 11.5931 12.7505 12.0604 13.1965 12.2941 13.8196 12.2941 14.6196ZM11.1542 14.6479C11.1542 13.5364 10.6633 12.9806 9.68152 12.9806L9.09741 12.9806 9.09741 16.3507 9.56824 16.3507C10.6255 16.3507 11.1542 15.7831 11.1542 14.6479Z"/><path d="M17.4843 14.6621C17.4843 15.5188 17.2719 16.1772 16.8471 16.6375 16.4223 17.0977 15.8134 17.3278 15.0205 17.3278 14.2275 17.3278 13.6186 17.0977 13.1938 16.6375 12.769 16.1772 12.5566 15.5164 12.5566 14.655 12.5566 13.7936 12.769 13.1364 13.1938 12.6832 13.621 12.2277 14.2322 12 15.0275 12 15.8229 12 16.4306 12.2289 16.8507 12.6868 17.2731 13.1446 17.4843 13.8031 17.4843 14.6621ZM13.7071 14.6621C13.7071 15.2403 13.8169 15.6757 14.0363 15.9684 14.2558 16.261 14.5839 16.4073 15.0205 16.4073 15.896 16.4073 16.3338 15.8256 16.3338 14.6621 16.3338 13.4963 15.8984 12.9133 15.0275 12.9133 14.5909 12.9133 14.2617 13.0608 14.0399 13.3558 13.818 13.6485 13.7071 14.0839 13.7071 14.6621Z"/><path d="M20.1753 12.9204C19.7623 12.9204 19.4425 13.0762 19.216 13.3877 18.9894 13.6969 18.8761 14.1287 18.8761 14.6833 18.8761 15.8374 19.3092 16.4144 20.1753 16.4144 20.5388 16.4144 20.9789 16.3236 21.4958 16.1418L21.4958 17.0623C21.071 17.2393 20.5966 17.3278 20.0727 17.3278 19.3198 17.3278 18.744 17.1 18.3451 16.6445 17.9463 16.1867 17.7469 15.5306 17.7469 14.6763 17.7469 14.1382 17.8448 13.6674 18.0407 13.2638 18.2366 12.8579 18.5174 12.5475 18.8832 12.3328 19.2514 12.1156 19.6821 12.0071 20.1753 12.0071 20.678 12.0071 21.1831 12.1286 21.6905 12.3717L21.3365 13.2638C21.1429 13.1718 20.9482 13.0915 20.7524 13.0231 20.5565 12.9546 20.3641 12.9204 20.1753 12.9204Z"/></symbol><symbol id="ic-Excel" viewBox="0 0 26 26"><g><path d="M25.162 3 16 3 16 5.984 19.031 5.984 19.031 8.015 16 8.015 16 10 19 10 19 12 16 12 16 14 19 14 19 16 16 16 16 18 19 18 19 20 16 20 16 23 25.162 23C25.623 23 26 22.609 26 22.13L26 3.87C26 3.391 25.623 3 25.162 3ZM24 20 20 20 20 18 24 18 24 20ZM24 16 20 16 20 14 24 14 24 16ZM24 12 20 12 20 10 24 10 24 12ZM24 8 20 8 20 6 24 6 24 8Z"/><path d="M0 2.889 0 23.112 15 26 15 0 0 2.889ZM9.488 18.08 7.743 14.781C7.677 14.658 7.609 14.432 7.538 14.103L7.511 14.103C7.478 14.258 7.4 14.494 7.277 14.81L5.526 18.08 2.807 18.08 6.035 13.016 3.082 7.951 5.858 7.951 7.306 10.988C7.419 11.228 7.52 11.513 7.61 11.842L7.638 11.842C7.695 11.644 7.801 11.35 7.956 10.959L9.566 7.95 12.108 7.95 9.071 12.972 12.193 18.079 9.488 18.08 9.488 18.08Z"/></g></symbol><symbol id="ic-HTML" viewBox="0 0 512 512"><g><path d="M256.005 0C114.611 0 0 114.611 0 255.996 0 397.39 114.611 512 256.005 512 397.39 512 512 397.39 512 255.996 512 114.611 397.39 0 256.005 0ZM187.066 203.112C187.066 203.478 186.909 203.801 186.63 204.028L114.577 257.61 186.63 311.218C186.909 311.41 187.066 311.759 187.066 312.108L187.066 345.178C187.066 345.588 186.865 345.954 186.534 346.146 186.386 346.225 186.238 346.276 186.063 346.276 185.871 346.276 185.671 346.206 185.505 346.076L81.734 268.894C81.464 268.693 81.289 268.353 81.289 267.996L81.289 247.231C81.289 246.865 81.463 246.525 81.734 246.324L185.505 169.144C185.671 169.013 185.871 168.952 186.063 168.952 186.237 168.952 186.386 168.996 186.534 169.082 186.866 169.265 187.066 169.632 187.066 170.05L187.066 203.112ZM238.519 360.404C238.371 360.849 238.005 361.145 237.568 361.145L208.562 361.145C208.231 361.145 207.934 360.97 207.742 360.673 207.559 360.395 207.506 360.028 207.611 359.697L273.481 151.579C273.612 151.142 273.995 150.855 274.423 150.855L303.437 150.855C303.751 150.855 304.065 151.021 304.248 151.309 304.431 151.597 304.484 151.963 304.379 152.303L238.519 360.404ZM430.694 267.996C430.694 268.353 430.538 268.694 430.258 268.894L326.487 346.075C326.321 346.205 326.13 346.275 325.929 346.275 325.763 346.275 325.607 346.223 325.458 346.145 325.127 345.953 324.926 345.587 324.926 345.177L324.926 312.115C324.926 311.758 325.083 311.409 325.362 311.217L397.415 257.609 325.362 204.027C325.084 203.818 324.926 203.487 324.926 203.121L324.926 170.05C324.926 169.632 325.127 169.265 325.458 169.082 325.606 168.996 325.763 168.952 325.929 168.952 326.13 168.952 326.321 169.013 326.487 169.144L430.258 246.324C430.538 246.525 430.694 246.865 430.694 247.231L430.694 267.996Z"/></g></symbol><symbol id="ic-Image" viewBox="0 0 32 32"><defs></defs><g id="Page-1" fill-rule="evenodd"><g id="Icon-Set-Filled" transform="translate(-362 -101)"><path d="M392 129C392 130.104 391.104 131 390 131L384.832 131 377.464 123.535 386 114.999 392 120.999 392 129 392 129ZM366 131C364.896 131 364 130.104 364 129L364 128.061 371.945 120.945 382.001 131 366 131 366 131ZM370 105C372.209 105 374 106.791 374 109 374 111.209 372.209 113 370 113 367.791 113 366 111.209 366 109 366 106.791 367.791 105 370 105L370 105ZM390 101 366 101C363.791 101 362 102.791 362 105L362 129C362 131.209 363.791 133 366 133L390 133C392.209 133 394 131.209 394 129L394 105C394 102.791 392.209 101 390 101L390 101ZM370 111C371.104 111 372 110.104 372 109 372 107.896 371.104 107 370 107 368.896 107 368 107.896 368 109 368 110.104 368.896 111 370 111L370 111Z" id="image-picture"/></g></g></symbol><symbol id="ic-Kite" viewBox="0 0 100 100"><path d="M97 94.9 92 89.9 96.5 88.7C97.4 88.5 97.7 87.3 97.1 86.6L92.4 82C91.7 81.3 90.6 81.6 90.3 82.6L89.1 87.1 79.4 77.4 83.9 76.2C84.8 76 85.1 74.8 84.5 74.1L79.9 69.5C79.2 68.8 78.1 69.1 77.8 70.1L76.6 74.6 75.3 73.3C72.8 70.8 72.8 66.7 75.3 64.2 76.8 62.7 77.8 60.9 78.2 58.9L82.3 61.3C83.1 61.8 84.2 61.2 84.2 60.2L84.2 53.7C84.2 52.7 83.2 52.1 82.3 52.6L78.2 55C78.1 54.3 77.9 53.5 77.6 52.8 76 48.8 72.3 46.4 68 46.4L61.3 46.4 63.8 42.1C64.3 41.3 63.7 40.2 62.7 40.2L56.2 40.2C55.2 40.2 54.6 41.2 55.1 42.1L57.6 46.4 50.8 46.4C51.4 45.2 51.5 43.7 51.2 42.3L43.7 6.9C43 3.7 40.2 1.5 36.9 1.6L9.8 2.3C6.2 2.4 3.3 5.3 3.3 8.8L2.5 36.1C2.4 39.4 4.7 42.2 7.8 42.9L43.2 50.3C43.5 50.4 43.9 50.4 44.2 50.4 44.3 50.4 44.3 50.4 44.4 50.4L57.5 50.4 55 54.7C54.5 55.5 55.1 56.6 56.1 56.6L62.6 56.6C63.6 56.6 64.2 55.6 63.7 54.7L61.2 50.4 68 50.4C71.2 50.4 73.1 52.4 73.9 54.4 74 54.6 74.1 54.9 74.2 55.2L69.8 52.7C69 52.2 67.9 52.8 67.9 53.8L67.9 60.3C67.9 61.3 68.9 61.9 69.8 61.4L74.1 58.9C73.8 59.8 73.3 60.6 72.5 61.4 68.4 65.5 68.4 72.1 72.5 76.1L73.9 77.5 68.9 78.8C68 79 67.7 80.2 68.3 80.9L72.9 85.5C73.6 86.2 74.7 85.9 75 84.9L76.3 79.9 86.4 90 81.4 91.3C80.5 91.5 80.2 92.7 80.8 93.4L85.4 98C86.1 98.7 87.2 98.4 87.5 97.4L88.8 92.4 94 97.6C94.4 98 94.9 98.2 95.4 98.2 95.9 98.2 96.4 98 96.8 97.6 97.7 96.9 97.7 95.7 97 94.9ZM47.1 45.9C46.9 46.1 46.6 46.2 46.4 46.2 46.2 46.2 45.9 46.1 45.7 45.9L22.9 23.1 7.7 38.3C7.5 38.5 7.2 38.6 7 38.6 6.8 38.6 6.5 38.5 6.3 38.3 5.9 37.9 5.9 37.3 6.3 36.9L21.5 21.7 7.3 7.5C6.9 7.1 6.9 6.5 7.3 6.1 7.7 5.7 8.3 5.7 8.7 6.1L22.9 20.3 37.8 5.4C38.2 5 38.8 5 39.2 5.4 39.6 5.8 39.6 6.4 39.2 6.8L24.3 21.7 47.1 44.5C47.5 44.9 47.5 45.5 47.1 45.9Z"/></symbol><symbol id="ic-Markdown" viewBox="0 0 15 15"><path d="M0 3.5C0 2.67157 0.671573 2 1.5 2L13.5 2C14.3284 2 15 2.67157 15 3.5L15 11.5C15 12.3284 14.3284 13 13.5 13L1.5 13C0.671574 13 0 12.3284 0 11.5L0 3.5ZM10 5 10 8.29289 8.85359 7.14648 8.14648 7.85359 10.1465 9.85359C10.3417 10.0489 10.6583 10.0489 10.8536 9.85359L12.8536 7.85359 12.1465 7.14648 11 8.29297 11 5 10 5ZM2.85355 5.14646C2.71055 5.00346 2.4955 4.96068 2.30866 5.03807 2.12182 5.11547 2 5.29778 2 5.50001L2 10 3 10 3 6.70712 4.5 8.20712 6 6.70712 6 10 7 10 7 5.50001C7 5.29778 6.87818 5.11547 6.69134 5.03807 6.5045 4.96068 6.28945 5.00346 6.14645 5.14646L4.5 6.79291 2.85355 5.14646Z" fill-rule="evenodd" clip-rule="evenodd"/></symbol><symbol id="ic-Outlook" viewBox="0 0 24 24"><path d="M8.84647 16 4.66655 16C4.29842 16 4 15.7016 4 15.3335L4 8.66653C4 8.2984 4.29842 7.99998 4.66655 7.99998L6.89935 7.99998C7.18444 5.32976 9.44458 3.25 12.1905 3.25 14.9532 3.25 17.2243 5.35539 17.4866 8.04926 19.4888 8.68036 20.9405 10.551 20.9405 12.762 20.9405 15.2708 19.0705 17.3428 16.6483 17.6603 16.2407 19.4305 14.6556 20.75 12.7619 20.75 10.5593 20.75 8.7738 18.9645 8.7738 16.7619 8.7738 16.5013 8.79878 16.2466 8.84647 16ZM15.9384 7.82184C15.59 6.07024 14.0444 4.75 12.1905 4.75 10.2742 4.75 8.68729 6.16053 8.41147 7.99998L11.3335 7.99998C11.7016 7.99998 12 8.2984 12 8.66653L12 9.86164C12.8867 8.64079 14.3188 7.84163 15.9384 7.82184ZM12 14.3924 12 15.3335C12 15.7016 11.7016 16 11.3335 16L10.3926 16C10.3155 16.2402 10.2738 16.4962 10.2738 16.7619 10.2738 18.136 11.3878 19.25 12.7619 19.25 14.0866 19.25 15.17 18.2143 15.2458 16.909 15.2486 16.8604 15.25 16.8114 15.25 16.7619 15.25 15.3878 14.136 14.2738 12.7619 14.2738 12.5318 14.2738 12.3101 14.3048 12.1003 14.3625 12.0666 14.3718 12.0331 14.3818 12 14.3924ZM16.7004 16.1311C16.398 14.2283 14.7498 12.7738 12.7619 12.7738 12.6941 12.7738 12.6266 12.7755 12.5596 12.7789L12.5595 12.762C12.5595 10.8618 14.0999 9.32147 16 9.32147 16.2144 9.32147 16.4236 9.34098 16.626 9.37814 18.2272 9.67206 19.4405 11.0761 19.4405 12.762 19.4405 14.4221 18.2647 15.8076 16.7004 16.1311ZM6.46824 11.4918C6.56753 11.6612 6.70423 11.8057 6.86787 11.9142 7.08025 12.0538 7.306 12.1718 7.54178 12.2666 7.83816 12.3913 8.06255 12.4918 8.21493 12.568 8.347 12.6303 8.46766 12.7144 8.57189 12.8167 8.65569 12.8999 8.70239 13.0133 8.70141 13.1314 8.70519 13.3011 8.6153 13.459 8.4675 13.5424 8.25651 13.6527 8.01935 13.703 7.78178 13.688 7.52508 13.684 7.2703 13.6432 7.0252 13.5668 6.77927 13.4984 6.5472 13.3876 6.33948 13.2392L6.33948 14.163C6.55679 14.2573 6.78493 14.3244 7.01872 14.3626 7.2956 14.4095 7.576 14.4325 7.85682 14.4312 8.16981 14.436 8.48156 14.3907 8.78026 14.2971 9.03421 14.2185 9.25943 14.067 9.42789 13.8613 9.59689 13.6376 9.68258 13.362 9.67017 13.0819 9.67915 12.8562 9.62647 12.6323 9.51779 12.4342 9.41179 12.2596 9.26581 12.1125 9.09188 12.0053 8.86221 11.8665 8.62107 11.7476 8.37111 11.6499 8.34481 11.6369 8.31755 11.6259 8.28959 11.6171 8.03562 11.5122 7.84514 11.4281 7.71815 11.3649 7.60403 11.3116 7.50072 11.2377 7.41339 11.147 7.33945 11.07 7.29844 10.9673 7.2991 10.8605 7.29944 10.6846 7.4042 10.5256 7.56577 10.4559 7.77503 10.3539 8.00623 10.3049 8.23892 10.3135 8.45957 10.313 8.67947 10.3394 8.89378 10.3919 9.09129 10.4383 9.28027 10.5154 9.45378 10.6205L9.45378 9.74433C9.05445 9.61434 8.63536 9.55566 8.21568 9.57099 7.89655 9.56756 7.57902 9.61673 7.27586 9.71651 7.00986 9.8005 6.77193 9.9557 6.58786 10.1653 6.41269 10.3746 6.32062 10.641 6.32919 10.9139 6.32409 11.1153 6.37204 11.3146 6.46824 11.4918Z" fill-rule="evenodd" clip-rule="evenodd"/></symbol><symbol id="ic-PDF" viewBox="0 0 15 15"><path d="M3.5 8 3 8 3 7 3.5 7C3.77614 7 4 7.22386 4 7.5 4 7.77614 3.77614 8 3.5 8Z"/><path d="M7 10 7 7 7.5 7C7.77614 7 8 7.22386 8 7.5L8 9.5C8 9.77614 7.77614 10 7.5 10L7 10Z"/><path d="M1 1.5C1 0.671573 1.67157 0 2.5 0L10.7071 0 14 3.29289 14 13.5C14 14.3284 13.3284 15 12.5 15L2.5 15C1.67157 15 1 14.3284 1 13.5L1 1.5ZM3.5 6 2 6 2 11 3 11 3 9 3.5 9C4.32843 9 5 8.32843 5 7.5 5 6.67157 4.32843 6 3.5 6ZM7.5 6 6 6 6 11 7.5 11C8.32843 11 9 10.3284 9 9.5L9 7.5C9 6.67157 8.32843 6 7.5 6ZM10 11 10 6 13 6 13 7 11 7 11 8 12 8 12 9 11 9 11 11 10 11Z" fill-rule="evenodd" clip-rule="evenodd"/></symbol><symbol id="ic-PowerPoint" viewBox="0 0 24 24"><rect x="0" y="0" width="24" height="24" fill="none"/><path d="M14 5 14 7.78C14.5476 7.28221 15.2599 7.00441 16 7L16 10 19 10C18.9911 11.6568 17.6408 12.9928 15.984 12.9839 15.2516 12.98 14.5459 12.7083 14 12.22L14 14 20 14 20 15 14 15 14 16 20 16 20 17 14 17 14 19 22 19 22 5ZM17 9 17 6C18.6569 6 20 7.34315 20 9Z"/><g><path d="M2 4.8 2 19.21 14 21 14 3.08ZM9.6 12.61C8.89507 13.1719 7.99583 13.4309 7.1 13.33L6.21 13.33 6.21 16.67 4.81 16.49 4.81 7.89 7.27 7.6C8.10379 7.41949 8.97513 7.58942 9.68 8.07 10.2574 8.63752 10.5509 9.43348 10.48 10.24 10.5501 11.1211 10.2281 11.9882 9.6 12.61Z"/><path d="M7.18 8.86 6.18 8.94 6.18 12.08 7 12.08C7.55819 12.1296 8.11636 11.9848 8.58 11.67 8.9118 11.3158 9.06611 10.8308 9 10.35 9.03995 9.90243 8.87439 9.46095 8.55 9.15 8.14537 8.88614 7.65685 8.78273 7.18 8.86Z"/></g></symbol><symbol id="ic-Reports_Graph" viewBox="0 0 18 18"><g fill-rule="evenodd"><rect x="15" y="0" rx="1" width="3" height="18"/><rect x="10" y="5" rx="1" width="3" height="13"/><rect x="5" y="9" rx="1" width="3" height="9"/><rect x="0" y="13" rx="1.001" width="3" height="5"/></g></symbol><symbol id="ic-Think" viewBox="-2.5 0 19 19"><path d="M11.835 8.827C12.7593 9.96031 12.5899 11.6283 11.4566 12.5527 10.6028 13.249 9.40698 13.344 8.454 12.791 7.19116 14.4213 4.84577 14.7193 3.21542 13.4564 2.30145 12.7485 1.76694 11.6571 1.768 10.501 1.768 10.402 1.776 10.306 1.783 10.209 0.0929778 9.02721-0.319027 6.69915 0.86276 5.00913 2.04455 3.31911 4.37261 2.9071 6.06263 4.08889 6.11022 4.12216 6.15702 4.15654 6.203 4.192 7.62408 2.75294 9.94269 2.73837 11.3817 4.15946 12.6399 5.40185 12.8306 7.36576 11.835 8.827ZM4.401 8.562C4.43638 8.11993 4.1067 7.73288 3.66463 7.69749 3.63981 7.6955 3.6149 7.69467 3.59 7.695 3.14107 7.68682 2.77051 8.04413 2.76233 8.49306 2.76191 8.51605 2.76247 8.53905 2.764 8.562 2.73662 9.01405 3.08088 9.4027 3.53292 9.43008 3.98497 9.45746 4.37362 9.1132 4.401 8.66115 4.403 8.62813 4.403 8.59502 4.401 8.562ZM7.247 8.562C7.28295 8.12053 6.9542 7.73351 6.51273 7.69756 6.48721 7.69548 6.4616 7.69463 6.436 7.695 5.98706 7.68738 5.61694 8.04514 5.60931 8.49408 5.60893 8.51673 5.60949 8.53939 5.611 8.562 5.57939 9.01377 5.92 9.40563 6.37176 9.43724 6.82353 9.46885 7.21539 9.12824 7.247 8.67647 7.24967 8.63836 7.24967 8.60011 7.247 8.562ZM10.094 8.562C10.13 8.12053 9.80122 7.7335 9.35975 7.69755 9.33389 7.69544 9.30794 7.69459 9.282 7.695 8.83306 7.68738 8.46294 8.04514 8.45531 8.49408 8.45493 8.51673 8.45549 8.53939 8.457 8.562 8.42962 9.01405 8.77388 9.4027 9.22592 9.43008 9.67797 9.45746 10.0666 9.1132 10.094 8.66115 10.096 8.62813 10.096 8.59502 10.094 8.562ZM12.674 15.253C12.0438 15.253 11.533 14.7422 11.533 14.112 11.533 13.4818 12.0438 12.971 12.674 12.971 13.3042 12.971 13.815 13.4818 13.815 14.112 13.815 14.7418 13.3048 15.2524 12.675 15.253Z"/></symbol></svg>
+
+<div class="doc-overlay" id="doc-overlay">
+  <div class="doc-bar"><span id="doc-name"></span><a id="doc-newtab" target="_blank" rel="noopener noreferrer">Open in new tab</a><button id="doc-close">Close</button></div>
+  <iframe id="doc-frame" title="Document"></iframe>
+</div>
+</div>
+<!-- ═══ DEPLOY WALKTHROUGH DRAWER ═══ -->
+<div class="bfx-drawer-overlay" id="bfx-overlay" aria-hidden="true"></div>
+<div class="bfx-drawer" id="bfx-drawer" role="dialog" aria-modal="true" aria-label="Deploy walkthrough" tabindex="-1" aria-hidden="true" inert>
+  <div class="bfx-drawer-header">
+    <div class="bfx-drawer-title"><span>[SITE NAME]</span> Deploy Walkthrough</div>
+    <button class="bfx-btn-close" id="bfx-close" aria-label="Close walkthrough">&times;</button>
+  </div>
+  <div class="bfx-drawer-body">
+    <div class="bfx-mock-browser">
+      <div class="bfx-browser-chrome">
+        <div class="bfx-browser-dots"><i></i><i></i><i></i></div>
+        <div class="bfx-browser-url" id="bfx-url">yourplatform.example</div>
+      </div>
+      <div class="bfx-browser-viewport" id="bfx-viewport">
+        <div class="bfx-mock-scene active" data-step="1">
+          <img class="bfx-mock-video" src="SiteAssets/YOUR-WALKTHROUGH-STEP-1.gif" alt="Step 1: Sign in" loading="lazy" onerror="this.style.display='none';">
+        </div>
+        <div class="bfx-mock-scene" data-step="2">
+          <img class="bfx-mock-video" src="SiteAssets/YOUR-WALKTHROUGH-STEP-2.gif" alt="Step 2: Open the item library" loading="lazy" onerror="this.style.display='none';">
+        </div>
+        <div class="bfx-mock-scene" data-step="3">
+          <img class="bfx-mock-video" src="SiteAssets/YOUR-WALKTHROUGH-STEP-3.gif" alt="Step 3: Start a new item" loading="lazy" onerror="this.style.display='none';">
+        </div>
+        <div class="bfx-mock-scene" data-step="4">
+          <img class="bfx-mock-video" src="SiteAssets/YOUR-WALKTHROUGH-STEP-4.gif" alt="Step 4: Start from a blank item" loading="lazy" onerror="this.style.display='none';">
+        </div>
+        <div class="bfx-mock-scene" data-step="5">
+          <img class="bfx-mock-video" src="SiteAssets/YOUR-WALKTHROUGH-STEP-5.gif" alt="Step 5: Select the blank card" loading="lazy" onerror="this.style.display='none';">
+        </div>
+        <div class="bfx-mock-scene" data-step="6">
+          <img class="bfx-mock-video" src="SiteAssets/YOUR-WALKTHROUGH-STEP-6.gif" alt="Step 6: Copy each field" loading="lazy" onerror="this.style.display='none';">
+        </div>
+        <div class="bfx-mock-scene" data-step="7">
+          <img class="bfx-mock-video" src="SiteAssets/YOUR-WALKTHROUGH-STEP-7.gif" alt="Step 7: Upload reference files" loading="lazy" onerror="this.style.display='none';">
+        </div>
+        <div class="bfx-mock-scene" data-step="8">
+          <img class="bfx-mock-video" src="SiteAssets/YOUR-WALKTHROUGH-STEP-8.gif" alt="Step 8: Add sub-components" loading="lazy" onerror="this.style.display='none';">
+        </div>
+        <div class="bfx-mock-scene bfx-scene-done" data-step="done">
+          <div class="bfx-mock-checkmark">&#10003;</div>
+          <div class="bfx-mock-done-text">Your item is now ready.</div>
+        </div>
+      </div>
+    </div>
+    <ol class="bfx-step-list" id="bfx-steps">
+      <li class="bfx-step-item active" data-step="1" tabindex="0" role="button" aria-pressed="true"><div class="bfx-step-number">1</div><div class="bfx-step-text"><strong>Sign in</strong><p>Go to your AI platform and sign in with your usual credentials.</p></div></li>
+      <li class="bfx-step-item" data-step="2" tabindex="0" role="button" aria-pressed="false"><div class="bfx-step-number">2</div><div class="bfx-step-text"><strong>Open the item library</strong><p>Find wherever your platform lists its agents, tools, or items, and open it.</p></div></li>
+      <li class="bfx-step-item" data-step="3" tabindex="0" role="button" aria-pressed="false"><div class="bfx-step-number">3</div><div class="bfx-step-text"><strong>Start a new item</strong><p>Click whatever button starts a new agent, tool, or item on your platform.</p></div></li>
+      <li class="bfx-step-item" data-step="4" tabindex="0" role="button" aria-pressed="false"><div class="bfx-step-number">4</div><div class="bfx-step-text"><strong>Start from a blank item</strong><p>Skip any guided builder if one is offered, so you keep full control of every field.</p></div></li>
+      <li class="bfx-step-item" data-step="5" tabindex="0" role="button" aria-pressed="false"><div class="bfx-step-number">5</div><div class="bfx-step-text"><strong>Select the blank card</strong><p>Pick the blank starting point. You'll paste everything from this gallery into it.</p></div></li>
+      <li class="bfx-step-item" data-step="6" tabindex="0" role="button" aria-pressed="false"><div class="bfx-step-number">6</div><div class="bfx-step-text"><strong>Copy each field</strong><p>On this item's page, copy its name, instructions, and description into the matching fields on your platform.</p></div></li>
+      <li class="bfx-step-item" data-step="7" tabindex="0" role="button" aria-pressed="false"><div class="bfx-step-number">7</div><div class="bfx-step-text"><strong>Upload reference files</strong><p>If your platform supports attached files or knowledge, upload whatever reference material this item needs.</p></div></li>
+      <li class="bfx-step-item" data-step="8" tabindex="0" role="button" aria-pressed="false"><div class="bfx-step-number">8</div><div class="bfx-step-text"><strong>Add sub-components</strong><p>If this item depends on other items, wire each one in. Repeat for every sub-component listed on this item's page.</p></div></li>
+      <li class="bfx-step-item" data-step="done" tabindex="0" role="button" aria-pressed="false"><div class="bfx-step-number bfx-step-number-done">&#10003;</div><div class="bfx-step-text"><strong>Done</strong><p id="bfx-done-summary">Your item is now ready. Go run it on your platform.</p></div></li>
+    </ol>
+  </div>
+  <div class="bfx-drawer-footer"><a href="https://example.com/" target="_blank" rel="noopener noreferrer" class="bfx-btn-launch">Open Your AI Platform</a></div>
+  <div class="bfx-drawer-attr">[SITE OWNER]</div>
+</div>
+
+<!-- ═══ DEPLOY FIELD PANEL (secondary drawer, step 6) ═══ -->
+<div class="bfx-deploy-panel" id="bfx-deploy-panel" role="complementary" aria-label="Item fields" aria-hidden="true" inert>
+  <div class="bfx-deploy-header">
+    <div class="bfx-deploy-htitle">Details</div>
+    <button class="bfx-btn-close" id="bfx-deploy-close" aria-label="Close details">&times;</button>
+  </div>
+  <div class="bfx-deploy-body">
+
+    <!-- Name -->
+    <div class="bfx-deploy-field-group">
+      <div class="bfx-deploy-section-label">Name <span class="info-dot" tabindex="0" title="This becomes the item's display name on your AI platform." aria-label="This becomes the item's display name on your AI platform.">i</span></div>
+      <div class="bfx-deploy-input-wrap">
+        <div class="bfx-deploy-input" id="deploy-field-name"></div>
+        <button class="bfx-deploy-copy-btn" data-field="deploy-field-name" aria-label="Copy name"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+      </div>
+      <div class="bfx-deploy-char-count" id="deploy-cc-name"></div>
+    </div>
+
+    <!-- Description -->
+    <div class="bfx-deploy-field-group">
+      <div class="bfx-deploy-section-label">Description <span class="info-dot" tabindex="0" title="Shown as the short description on this item's card." aria-label="Shown as the short description on this item's card.">i</span></div>
+      <div class="bfx-deploy-input-wrap">
+        <div class="bfx-deploy-input tall" id="deploy-field-desc"></div>
+        <button class="bfx-deploy-copy-btn" data-field="deploy-field-desc" aria-label="Copy description"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+      </div>
+      <div class="bfx-deploy-char-count" id="deploy-cc-desc"></div>
+    </div>
+
+    <!-- Instructions -->
+    <div class="bfx-deploy-field-group">
+      <div class="bfx-deploy-section-label">Instructions <span class="info-dot" tabindex="0" title="Pasted into your AI platform's system prompt field -- this is the item's full behavior." aria-label="Pasted into your AI platform's system prompt field -- this is the item's full behavior.">i</span></div>
+      <div class="bfx-deploy-input-wrap">
+        <div class="bfx-deploy-input mono" id="deploy-field-instr"></div>
+        <button class="bfx-deploy-copy-btn" data-field="deploy-field-instr" aria-label="Copy instructions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+      </div>
+      <div class="bfx-deploy-char-count" id="deploy-cc-instr"></div>
+    </div>
+
+    <!-- Model -->
+    <div class="bfx-deploy-field-group">
+      <div class="bfx-deploy-section-label">Model <span class="info-dot" tabindex="0" title="The model this item was built and tested against. Match it when creating the new item." aria-label="The model this item was built and tested against. Match it when creating the new item.">i</span></div>
+      <div class="bfx-deploy-model" id="deploy-field-model">
+        <span>[Your Model Name]</span>
+        <span class="arrow">&#9660;</span>
+      </div>
+    </div>
+
+    <!-- Connectors -->
+    <div class="bfx-deploy-field-group">
+      <div class="bfx-deploy-section-label">Connectors</div>
+      <div class="bfx-deploy-chip-area">
+        <div class="bfx-deploy-chip" title="Example only -- shows what a connected connector looks like on the real card. Add your own directly on your platform." aria-label="Example connector, not a live control. Add your own directly on your platform."><span class="globe">&#9679;</span> Example Connector <span class="chip-x" tabindex="0">&times;</span></div>
+      </div>
+    </div>
+
+    <!-- Knowledge -->
+    <div class="bfx-deploy-field-group">
+      <div class="bfx-deploy-section-label">Knowledge</div>
+      <div class="bfx-deploy-knowledge-area" id="deploy-field-knowledge">Add files your item can reference</div>
+    </div>
+
+    <!-- Personalization -->
+    <div class="bfx-deploy-field-group">
+      <div class="bfx-deploy-section-label">Personalization</div>
+      <div class="bfx-deploy-starter">Starter prompt</div>
+      <div class="bfx-deploy-starter">Starter prompt</div>
+    </div>
+
+  </div>
+</div>
+
+<div class="footer">
+  <div>[SITE OWNER] &middot; Single-file shell template</div>
+  <div class="footer-ai-note">Generated with the assistance of AI</div>
+</div>
+
+<script>
+/* ============ DATA BUNDLE ============
+   agentData: one object per gallery item, rendered through the shared
+   hero-page template in the ROUTER/ENGINE script below, instead of each
+   item shipping as its own full HTML document. example1/example2 show
+   every supported field, including the optional sampleOutputs tab.
+   legacyPages: full-page HTML for the two static routes, #news and
+   #learn. siteTitles: an optional hash -> display-title lookup, handy
+   if you wire up document.title changes on navigation later. */
+var agentData = {
+  "#example1": {
+    "displayTitle": "Example Item One [EXAMPLE1]",
+    "eyebrow": "Example Item One",
+    "title": "EXAMPLE1",
+    "heroMedia": "SiteAssets/YOUR-HERO-IMAGE-1.jpg",
+    "tools": [
+      "PDF",
+      "Markdown",
+      "Copy"
+    ],
+    "status": "Example",
+    "model": "[Your Model Name]",
+    "author": "[Your Name]",
+    "version": "v1.0",
+    "platformUrl": "https://example.com/",
+    "referenceUrl": null,
+    "inText": "Describe what a person hands this item to start: a document, a question, a file -- whatever it actually takes as input.",
+    "outText": "Describe what they get back: the finished thing this item hands over when it's done.",
+    "tagline": "One sentence: what does Example Item One do, and why would someone reach for it?",
+    "longDesc": [
+      "This is the long description. It runs a few short paragraphs and explains, in plain language, what this item is for, who it's for, and what happens when someone uses it. The first paragraph gets an automatic drop-cap treatment -- see .long-desc p.lede in the CSS.",
+      "Use the second paragraph (and any after it) for the how: what it does step by step, what it needs from the person using it, and what it deliberately won't do. Keep paragraphs short -- this column is narrow by design."
+    ],
+    "toolboxItems": [
+      "PDF",
+      "Markdown",
+      "Copy"
+    ],
+    "agentMarkdown": "# Example Item One — Instructions\n\n## Role\nReplace this with what this item actually is: an AI agent's full system prompt, a tool's setup instructions, a process checklist -- whatever your site's \"copy this and go\" content is for a real item.\n\n## How it works\n1. Explain the first step.\n2. Explain the second step.\n3. Explain what a finished result looks like.\n\nThis whole block is copy-ready plain text. The \"Copy to clipboard\" button above the pane copies exactly this.",
+    "agentMarkdownNote": null,
+    "worksWith": [
+      {
+        "slug": "example2",
+        "img": "SiteAssets/YOUR-HERO-IMAGE-2.jpg",
+        "title": "Example Item Two [EXAMPLE2]",
+        "desc": "A second example item, so you can see how one item links to another it works with."
+      }
+    ],
+    "footerNote": "This footer note is a placeholder. Replace it with a real closing note, or remove the footerNote field to omit the footer entirely.",
+    "hasAudio": false,
+    "audioTitle": null
+  },
+  "#example2": {
+    "displayTitle": "Example Item Two [EXAMPLE2]",
+    "eyebrow": "Example Item Two",
+    "title": "EXAMPLE2",
+    "heroMedia": "SiteAssets/YOUR-HERO-IMAGE-2.jpg",
+    "tools": [
+      "DOCX",
+      "Think",
+      "Reports_Graph"
+    ],
+    "status": "Example",
+    "model": "[Your Model Name]",
+    "author": "[Your Name]",
+    "version": "v1.0",
+    "platformUrl": "https://example.com/",
+    "referenceUrl": "https://example.com/reference-guide",
+    "inText": "This item's In/Out strip works the same way as Example Item One's -- describe the input here.",
+    "outText": "And describe the output here. Leave either field out and that half of the strip just doesn't render.",
+    "tagline": "This item exists mainly to demonstrate the optional Sample Outputs tab below, populated with two example entries.",
+    "longDesc": [
+      "This is Example Item Two's long description. Like Example Item One, the first paragraph gets the drop-cap treatment and every paragraph after it is a plain, left-rule paragraph.",
+      "The Toolbox card on the right (the .fact-rail) lists this item's tools using the same shared icon sprite as the tool rail on the left edge of the hero image -- both read from the same tools array."
+    ],
+    "toolboxItems": [
+      "DOCX",
+      "Think",
+      "Reports_Graph"
+    ],
+    "agentMarkdown": "# Example Item Two — Instructions\n\n## Role\nSame pattern as Example Item One: this block is the copy-ready instruction text a person pastes into your AI platform to stand this item up for real.\n\n## Notes\n- Keep this in plain text or simple Markdown -- it's rendered as pre-formatted text, not parsed.\n- There's no length limit enforced by this template, but the pane is collapsible with a \"Show full markdown\" toggle once it grows past a few hundred pixels tall.",
+    "agentMarkdownNote": null,
+    "worksWith": [
+      {
+        "slug": "example1",
+        "img": "SiteAssets/YOUR-HERO-IMAGE-1.jpg",
+        "title": "Example Item One [EXAMPLE1]",
+        "desc": "The first example item -- this Works With row is how items point back at each other."
+      }
+    ],
+    "footerNote": null,
+    "hasAudio": false,
+    "audioTitle": null,
+    "sampleOutputs": [
+      {
+        "label": "Example output 1",
+        "img": "SiteAssets/YOUR-SAMPLE-OUTPUT-1.jpg",
+        "url": "SiteAssets/YOUR-SAMPLE-OUTPUT-1.jpg"
+      },
+      {
+        "label": "Example output 2",
+        "img": "SiteAssets/YOUR-SAMPLE-OUTPUT-2.jpg",
+        "url": "SiteAssets/YOUR-SAMPLE-OUTPUT-2.jpg"
+      }
+    ]
+  }
+};
+
+var legacyPages = {
+  "#news": "<div class=\"back-strip\">\n  <a class=\"back-link\" href=\"#home\" target=\"_parent\">&#8592; BACK TO GALLERY</a>\n</div>\n\n<div class=\"news-wrap\">\n\n  <!-- NEWS LANDING -->\n  <div class=\"page active\" id=\"page-news-landing\">\n    <div class=\"news-landing\">\n      <div class=\"news-header\">\n        <h1>News</h1>\n        <p>Updates from [SITE OWNER] and the gallery.</p>\n      </div>\n\n      <a class=\"news-featured\" onclick=\"siteNewsShow('news-example')\">\n        <div class=\"feat-img\">\n          <div class=\"img-placeholder\">\n            <span class=\"img-num\">IMG-01</span>\n            <span class=\"img-desc\">Featured card image for \"Example Headline\"</span>\n          </div>\n        </div>\n        <div class=\"feat-body\">\n          <span class=\"feat-tag\">Example Category</span>\n          <div class=\"feat-title\">Example Headline</div>\n          <div class=\"feat-dek\">This is a placeholder news post. Replace this line with a one or two sentence summary of the real story -- it's shown on both this landing card and the article page below.</div>\n          <div class=\"feat-date\">Story by [Author] &middot; [Month Year]</div>\n        </div>\n      </a>\n\n      <!-- Add more posts by copying the <a class=\"news-featured\"> card above into a\n           <div class=\"news-grid\"> of <a class=\"news-card\"> cards, same pattern as\n           the featured one -- see the CSS for .news-grid/.news-card. -->\n    </div>\n  </div>\n\n  <!-- ARTICLE: EXAMPLE -->\n  <div class=\"page article-page\" id=\"page-news-example\">\n    <div style=\"padding:16px var(--news-row-pad) 0;\">\n      <a class=\"back-link\" onclick=\"siteNewsShow('news-landing')\">&#8592; BACK TO NEWS</a>\n    </div>\n    <div class=\"article-hero\">\n      <div class=\"img-placeholder\">\n        <span class=\"img-num\">IMG-02</span>\n        <span class=\"img-desc\">Hero banner for \"Example Headline\"</span>\n      </div>\n      <div class=\"article-scrim\"></div>\n      <div class=\"article-hero-content\">\n        <div class=\"article-eyebrow\">Example Category</div>\n        <div class=\"article-title\">Example Headline</div>\n        <div class=\"article-dek\">This is the article's dek: one or two sentences that expand on the headline and pull a reader into the story.</div>\n        <div class=\"article-meta\">\n          <span>Story by [Author]</span>\n          <span>[Month Year]</span>\n          <span>[Location]</span>\n        </div>\n      </div>\n    </div>\n    <div class=\"article-body\">\n      <p>This is placeholder article body copy. Each paragraph here is one <code>&lt;p&gt;</code> inside <code>.article-body</code> -- write a real story the same way, one paragraph per line.</p>\n      <p>Use <strong>bold text</strong> for names or terms worth calling out, the way this sentence does.</p>\n      <div class=\"inline-img\">\n        <div class=\"img-placeholder\">\n          <span class=\"img-num\">IMG-03</span>\n          <span class=\"img-desc\">Inline image placeholder -- drop a real image in and remove this block</span>\n        </div>\n      </div>\n      <p>Add as many paragraphs as the story needs, then close it out and let the tags and footer below do the rest.</p>\n    </div>\n    <div class=\"article-tags\">\n      <span class=\"tag\">example</span><span class=\"tag\">news</span><span class=\"tag\">placeholder</span>\n    </div>\n    <div class=\"article-footer\">\n      [SITE OWNER] &middot; [Location] | [Month Year]\n    </div>\n  </div>\n\n</div>\n",
+  "#learn": "<div class=\"page-learn\">\n<div class=\"back-strip\">\n    <a class=\"back-link\" href=\"#home\" target=\"_parent\">&#8592; BACK TO GALLERY</a>\n  </div>\n\n  <div class=\"hero\">\n    <div class=\"hero-media\">\n      <img src=\"SiteAssets/YOUR-LEARN-HERO-IMAGE.jpg\"\n           alt=\"Getting started\"\n           onerror=\"this.style.display='none'; this.parentElement.classList.add('media-fallback');\">\n    </div>\n    <div class=\"hero-scrim\"></div>\n    <div class=\"hero-content\">\n      <div class=\"hero-eyebrow\">New to this template? Start here.</div>\n      <div class=\"hero-title\">ADD AN ITEM. <span class=\"accent\">GO LIVE.</span></div>\n\n      <div class=\"meta-row\">\n        <span class=\"meta-chip\"><span class=\"k\">Time to add one item:</span> about 10 minutes</span>\n        <span class=\"meta-chip\"><span class=\"k\">You need:</span> a text editor</span>\n        <span class=\"meta-chip\"><span class=\"k\">You install:</span> nothing</span>\n      </div>\n\n      <div class=\"action-row\">\n        <a class=\"btn btn-primary\" href=\"#home\" target=\"_parent\">Browse the Gallery</a>\n        <a class=\"btn btn-secondary\" href=\"https://example.com/\" target=\"_blank\" rel=\"noopener noreferrer\">Open Your AI Platform</a>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"synopsis\">\n    <p class=\"tagline\">Everything in this gallery, the cards, the hero pages, the carousels, comes from one JavaScript object named <code>agentData</code> near the bottom of this file. Add an entry there, add a matching card in the HTML above it, and the new item is live. That's the whole job:</p>\n  </div>\n\n  <div class=\"steps\">\n    <div class=\"step\">\n      <div class=\"step-num\">1</div>\n      <h3>WRITE THE DATA</h3>\n      <p>Copy one of the <code>'#example1'</code> / <code>'#example2'</code> entries in <code>agentData</code> and give the copy a new key, like <code>'#your-item'</code>. Fill in its title, tagline, description, and the rest of the fields -- <code>example1</code> and <code>example2</code> together show every field the template supports, including the optional <code>sampleOutputs</code> tab.</p>\n      <p>Add a matching line to <code>siteTitles</code> using the same key.</p>\n    </div>\n    <div class=\"step\">\n      <div class=\"step-num\">2</div>\n      <h3>ADD A CARD</h3>\n      <p>In the gallery rows further up this file, copy one <code>&lt;a data-hash&gt;</code> card block, point its <code>href</code> and <code>data-hash</code> at your new key, and update its title, image, and description to match.</p>\n      <p>Set <code>data-show=\"yes\"</code> to make the card visible, or <code>\"no\"</code> to keep it drafted but hidden.</p>\n    </div>\n    <div class=\"step\">\n      <div class=\"step-num\">3</div>\n      <h3>TEST THE LINK</h3>\n      <p>Open the file in a browser, click the new card, and confirm its hero page renders. Then click through its <b>Works With</b> links, its tabs, and the <a class=\"inline-link\" href=\"#home\" target=\"_parent\">home link</a> in the topbar to confirm routing still works end to end.</p>\n    </div>\n  </div>\n\n  <div class=\"tabs-section\">\n    <div class=\"tab-bar\">\n      <button class=\"tab-btn active\" onclick=\"skwxTab(this,'panel-rules')\">Rules of the Road</button>\n      <button class=\"tab-btn\" onclick=\"skwxTab(this,'panel-fix')\">If Something Breaks</button>\n      <button class=\"tab-btn\" onclick=\"skwxTab(this,'panel-faq')\">Good to Know</button>\n    </div>\n\n    <div id=\"panel-rules\" class=\"tab-panel active\">\n      <ul class=\"phase-list\">\n        <li><span class=\"num\">1</span><span><b>Keep the object shape.</b> Every entry in <code>agentData</code> needs the same fields as <code>example1</code>/<code>example2</code>, even where a value is <code>null</code> or an empty array. A missing field just means that section of the hero page doesn't render -- it won't throw an error.</span></li>\n        <li><span class=\"num\">2</span><span><b>Match the key everywhere.</b> A new <code>'#your-item'</code> key has to match exactly across <code>agentData</code>, <code>siteTitles</code>, and every card's <code>href</code>/<code>data-hash</code>. A mismatch just means a card that doesn't go anywhere when clicked.</span></li>\n        <li><span class=\"num\">3</span><span><b>Placeholder images fail safe.</b> Point <code>heroMedia</code> and the card images at real files once you have them. Until then, the built-in <code>onerror</code> handler quietly hides a broken image instead of showing a broken-image icon.</span></li>\n        <li><span class=\"num\">4</span><span><b>Leave the engine alone.</b> Everything below the data block (the router, the carousels, the drawer) is written once and shared by every item. Adding content shouldn't require editing it.</span></li>\n      </ul>\n    </div>\n\n    <div id=\"panel-fix\" class=\"tab-panel\">\n      <ul class=\"phase-list\">\n        <li><span class=\"num\">&#8250;</span><span><b>Card doesn't do anything when clicked?</b> Check that its <code>data-hash</code> matches an <code>agentData</code> key exactly, including the leading <code>#</code>.</span></li>\n        <li><span class=\"num\">&#8250;</span><span><b>Page loads to a blank gallery?</b> Open the browser console -- a syntax error in <code>agentData</code> (a missing comma, an unescaped quote) stops the whole data bundle from parsing, and the status chip in the topbar will say the engine is degraded.</span></li>\n        <li><span class=\"num\">&#8250;</span><span><b>Card is there but invisible?</b> Check <code>data-show</code> on that card -- it needs to be <code>\"yes\"</code>.</span></li>\n        <li><span class=\"num\">&#8250;</span><span><b>Still stuck?</b> Compare your new entry field-by-field against <code>example1</code>; it's written specifically to show the full shape.</span></li>\n      </ul>\n    </div>\n\n    <div id=\"panel-faq\" class=\"tab-panel\">\n      <ul class=\"phase-list\">\n        <li><span class=\"num\">&#8250;</span><span><b>Do I need a build step?</b> No. This is one static HTML file. Edit it, save it, open it (or re-upload it wherever it's hosted).</span></li>\n        <li><span class=\"num\">&#8250;</span><span><b>Can an item skip the \"Sample Outputs\" tab?</b> Yes -- leave <code>sampleOutputs</code> out or empty and the tab simply won't render. <code>example2</code> shows the populated version; <code>example1</code> shows the plain version.</span></li>\n        <li><span class=\"num\">&#8250;</span><span><b>What's the audio badge for?</b> Setting <code>hasAudio: true</code> plus an <code>audioTitle</code> turns on an audio-overview player on that item's hero page. It plays one shared audio element defined near the bottom of the script -- point <code>AUDIO_SRC</code> at a real file before turning it on for an item.</span></li>\n        <li><span class=\"num\">&#8250;</span><span><b>Where do rows and carousels come from?</b> Each <code>.agent-row</code> block in the HTML is one horizontal scrolling carousel; each <code>.card-wf</code> inside a <code>.wf-grid</code> is one static bundle card. Copy either pattern to add more.</span></li>\n      </ul>\n    </div>\n  </div>\n\n  <footer class=\"note\">\n    This is a template. Replace this footer with your own maintainer note.<br>\n    Questions, ideas, or something broken: reach [CONTACT NAME] at [CONTACT EMAIL].\n  </footer>\n</div>\n"
+};
+
+var siteTitles = {
+  "#home": "Home",
+  "#example1": "Example Item One [EXAMPLE1]",
+  "#example2": "Example Item Two [EXAMPLE2]",
+  "#news": "News",
+  "#learn": "Getting Started"
+};
+</script>
+<script>
+/* ============ DEPLOY WALKTHROUGH DRAWER ============ */
+(function () {
+  'use strict';
+  var dw = document.getElementById('bfx-drawer');
+  var ov = document.getElementById('bfx-overlay');
+  var closBtn = document.getElementById('bfx-close');
+  var stepItems = dw.querySelectorAll('.bfx-step-item');
+  var scenes = dw.querySelectorAll('.bfx-mock-scene');
+  var urlBar = document.getElementById('bfx-url');
+  var prevFocus = null;
+
+  /* Deploy field panel refs */
+  var deployPanel = document.getElementById('bfx-deploy-panel');
+  var deployClose = document.getElementById('bfx-deploy-close');
+  var deployFieldName  = document.getElementById('deploy-field-name');
+  var deployFieldDesc  = document.getElementById('deploy-field-desc');
+  var deployFieldInstr = document.getElementById('deploy-field-instr');
+  var deployCCName  = document.getElementById('deploy-cc-name');
+  var deployCCDesc  = document.getElementById('deploy-cc-desc');
+  var deployCCInstr = document.getElementById('deploy-cc-instr');
+  var deployModel   = document.getElementById('deploy-field-model');
+
+  var urlMap = {
+    '1':'yourplatform.example/login','2':'yourplatform.example/items','3':'yourplatform.example/items',
+    '4':'yourplatform.example/items/new','5':'yourplatform.example/items/new',
+    '6':'yourplatform.example/items/edit','7':'yourplatform.example/items/edit#knowledge',
+    '8':'yourplatform.example/items/edit#sub-items','done':'yourplatform.example/items/my-item'
+  };
+
+  /* ---- Extract item data from the hero page content ----
+     #app-frame is a plain <div> in this same document (not a nested
+     iframe), so this is a direct, same-origin query -- no cross-origin
+     boundary to fail against inside a sandboxed embed. */
+  function extractAgentData() {
+    var data = { name:'', desc:'', instr:'', model:'[Your Model Name]' };
+    try {
+      var frame = document.getElementById('app-frame');
+      if (!frame) return data;
+
+      var eyebrow = frame.querySelector('.hero-eyebrow');
+      var title   = frame.querySelector('.hero-title');
+      if (eyebrow && title) {
+        data.name = eyebrow.textContent.trim() + ' [' + title.textContent.trim() + ']';
+      } else if (title) {
+        data.name = title.textContent.trim();
+      }
+
+      var tagline = frame.querySelector('.tagline');
+      if (tagline) data.desc = tagline.textContent.trim();
+
+      var mdPane = frame.querySelector('.md-pane');
+      if (mdPane) data.instr = mdPane.textContent.trim();
+
+      /* Model from meta chip */
+      var chips = frame.querySelectorAll('.meta-chip');
+      chips.forEach(function(c) {
+        var k = c.querySelector('.k');
+        if (k && /model/i.test(k.textContent)) {
+          data.model = c.textContent.replace(k.textContent,'').trim();
+        }
+      });
+    } catch(e) { /* defensive only -- no cross-origin boundary here anymore */ }
+    return data;
+  }
+
+  /* ---- Populate deploy panel ---- */
+  function populateDeployPanel() {
+    var d = extractAgentData();
+    deployFieldName.textContent  = d.name  || '(agent name)';
+    deployFieldDesc.textContent  = d.desc  || '(description)';
+    deployFieldInstr.textContent = d.instr || '(instructions)';
+    deployCCName.textContent  = (d.name  ? d.name.length  : 0) + ' / 128';
+    deployCCDesc.textContent  = (d.desc  ? d.desc.length  : 0) + ' / 500000';
+    deployCCInstr.textContent = (d.instr ? d.instr.length : 0) + ' / 500000';
+    deployModel.querySelector('span').textContent = d.model;
+    /* Reset all copy buttons */
+    deployPanel.querySelectorAll('.bfx-deploy-copy-btn').forEach(function(btn) {
+      btn.classList.remove('copied');
+    });
+  }
+
+  function showDeployPanel() {
+    populateDeployPanel();
+    deployPanel.classList.add('open');
+    deployPanel.removeAttribute('aria-hidden');
+    deployPanel.inert = false;
+  }
+  function hideDeployPanel() {
+    deployPanel.classList.remove('open');
+    deployPanel.setAttribute('aria-hidden', 'true');
+    deployPanel.inert = true;
+  }
+
+  /* ---- Copy-to-clipboard handler ----
+     navigator.clipboard.writeText() existing is not the same as it working --
+     an enterprise clipboard-write policy can deny it at the permission
+     layer, which surfaces as a rejected promise, not a missing API. The
+     original code only had an execCommand fallback for the "API doesn't
+     exist at all" branch, so a deny-by-policy silently did nothing. Now the
+     rejection runs the same fallback, and if that ALSO fails, the button
+     shows an explicit failed state instead of staying silent. */
+  function fallbackCopyToField(text, btn) {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try {
+      document.execCommand('copy');
+      btn.classList.add('copied');
+      setTimeout(function() { btn.classList.remove('copied'); }, 2200);
+    } catch (ex) {
+      btn.classList.add('copy-failed');
+      btn.setAttribute('aria-label', 'Copy failed -- select and copy manually');
+      setTimeout(function() { btn.classList.remove('copy-failed'); }, 2200);
+    }
+    document.body.removeChild(ta);
+  }
+
+  deployPanel.addEventListener('click', function(e) {
+    var btn = e.target.closest('.bfx-deploy-copy-btn');
+    if (!btn) return;
+    var fieldId = btn.getAttribute('data-field');
+    var field = document.getElementById(fieldId);
+    if (!field) return;
+    var text = field.textContent || '';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function() {
+        btn.classList.add('copied');
+        setTimeout(function() { btn.classList.remove('copied'); }, 2200);
+      }, function() { fallbackCopyToField(text, btn); });
+    } else {
+      fallbackCopyToField(text, btn);
+    }
+  });
+
+  deployClose.addEventListener('click', hideDeployPanel);
+
+  /* ---- Step activation (with deploy panel logic) ---- */
+  function activateStep(v) {
+    stepItems.forEach(function(it) {
+      var on = it.dataset.step === v;
+      it.classList.toggle('active', on);
+      it.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    scenes.forEach(function(sc) {
+      sc.classList.toggle('active', sc.dataset.step === v);
+    });
+    urlBar.textContent = urlMap[v] || 'yourplatform.example';
+
+    /* Show deploy panel only on step 6 */
+    if (v === '6') { showDeployPanel(); }
+    else { hideDeployPanel(); }
+
+    /* Done step: name the actual agent instead of a generic "your agent" --
+       extractAgentData() already reads it off the open hero page for the
+       deploy panel, so this reuses that same mechanism at zero extra cost. */
+    if (v === 'done') {
+      var doneName = extractAgentData().name;
+      var doneMsg = doneName ? (doneName + ' is now ready. Go run it on your platform.') : 'Your item is now ready. Go run it on your platform.';
+      var doneSceneText = document.querySelector('.bfx-mock-done-text');
+      var doneSummary = document.getElementById('bfx-done-summary');
+      if (doneSceneText) doneSceneText.textContent = doneName ? (doneName + ' is now ready.') : 'Your item is now ready.';
+      if (doneSummary) doneSummary.textContent = doneMsg;
+    }
+  }
+
+  stepItems.forEach(function(it) {
+    it.addEventListener('click', function() { activateStep(this.dataset.step); });
+    it.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activateStep(this.dataset.step); }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        var arr = Array.from(stepItems), idx = arr.indexOf(this);
+        var nxt = e.key === 'ArrowDown' ? arr[(idx+1)%arr.length] : arr[(idx-1+arr.length)%arr.length];
+        nxt.focus(); activateStep(nxt.dataset.step);
+      }
+    });
+  });
+
+  window.openDeployDrawer = function() {
+    prevFocus = document.activeElement;
+    dw.classList.add('open'); ov.classList.add('open');
+    dw.removeAttribute('aria-hidden'); dw.inert = false;
+    ov.setAttribute('aria-hidden','false');
+    document.body.style.overflow = 'hidden';
+    activateStep('1');
+    dw.focus();
+  };
+
+
+  function closeDrawer() {
+    hideDeployPanel();
+    dw.classList.remove('open'); ov.classList.remove('open');
+    dw.setAttribute('aria-hidden','true'); dw.inert = true;
+    ov.setAttribute('aria-hidden','true');
+    document.body.style.overflow = '';
+    if (prevFocus) prevFocus.focus();
+    /* If #walkthrough was reached directly (bookmark/refresh/shared link)
+       rather than via a card click, location.hash is still '#walkthrough'
+       with no agent behind it -- clear it instead of leaving the drawer's
+       own transient state stuck in the address bar. The click-triggered
+       path never writes this hash in the first place (see the delegated
+       body click listener below), so this only fires for that direct-load
+       case. No re-render needed on close: the router never touched
+       #app-frame/home for a bare '#walkthrough' load (it returns immediately
+       into openDeployDrawer()), so the plain gallery is already the visible
+       state underneath -- clearing the hash is the whole fix. */
+    if (location.hash === '#walkthrough') {
+      try { location.hash = ''; } catch (e) { /* best-effort, see FIX 5 */ }
+    }
+  }
+
+  closBtn.addEventListener('click', closeDrawer);
+  ov.addEventListener('click', closeDrawer);
+
+  /* Tab-trap on `document`, not `dw` -- the Deploy Field Panel
+     (#bfx-deploy-panel) is a DOM sibling of the drawer, not a descendant,
+     so a keydown listener scoped to `dw` never even fires while focus sits
+     inside the panel (events only bubble through real ancestors). Listening
+     on `document` and folding the panel's focusable elements into the trap
+     whenever it's open covers both surfaces regardless of which one
+     currently holds focus -- without needing to change how either is
+     positioned or rendered. */
+  document.addEventListener('keydown', function(e) {
+    if (!dw.classList.contains('open')) return;
+    if (e.key === 'Escape') { closeDrawer(); return; }
+    if (e.key !== 'Tab') return;
+    var foc = Array.prototype.slice.call(dw.querySelectorAll('button,[href],[tabindex]:not([tabindex="-1"])'));
+    if (deployPanel.classList.contains('open')) {
+      foc = foc.concat(Array.prototype.slice.call(deployPanel.querySelectorAll('button,[href],[tabindex]:not([tabindex="-1"])')));
+    }
+    if (!foc.length) return;
+    if (e.shiftKey) { if (document.activeElement === foc[0]) { e.preventDefault(); foc[foc.length-1].focus(); } }
+    else { if (document.activeElement === foc[foc.length-1]) { e.preventDefault(); foc[0].focus(); } }
+  });
+})();
+</script>
+<script>
+/* ============ ROUTER / ENGINE -- template-based rendering, no nested iframe ============
+   Renders every item from one shared template directly into #app-frame (a
+   plain <div>, not an <iframe>). Nested srcdoc iframes are unreliable inside
+   a sandboxed embed environment (opaque origin, unreliable script execution,
+   unreliable target="_parent" navigation) -- rendering same-document instead
+   of into a nested iframe sidesteps that whole class of problem. */
+(function () {
+  if (typeof agentData === 'undefined' || typeof legacyPages === 'undefined') {
+    var lc = document.getElementById('live-chip');
+    if (lc) { lc.textContent = 'ENGINE DEGRADED - bundle failed to parse; static links active'; lc.style.color = '#e8b84b'; }
+    return;
+  }
+  try {
+  var frame = document.getElementById('app-frame');
+  var home = document.getElementById('home');
+  var chip = document.getElementById('live-chip');
+
+  function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  function toolIconsHTML(tools, mode) {
+    return (tools || []).map(function(t) {
+      return mode === 'rail'
+        ? '<span class="tool"><svg class="tool-ic" aria-hidden="true"><use href="#ic-' + t + '"/></svg><span class="tool-tip">' + esc(t) + '</span></span>'
+        : '<div class="toolbox-item"><svg class="tool-ic" aria-hidden="true"><use href="#ic-' + t + '"/></svg>' + esc(t) + '</div>';
+    }).join('');
+  }
+
+  /* Renders one agent hero page from data. Every section is conditional on
+     the data actually being present -- per the vault's no-placeholder rule,
+     a blank workbook field means the section is omitted, not stubbed. */
+  function renderAgentHTML(a) {
+    var audioBadge = a.hasAudio ? (
+      '<div class="audio-overview" id="audioBadge" role="region" aria-label="Audio overview">' +
+        '<button class="audio-play-btn" id="audioPlayBtn" aria-label="Play audio overview" type="button"><span class="audio-play-icon" id="audioPlayIcon"></span></button>' +
+        '<div class="audio-info"><div class="audio-label">Audio Overview</div><div class="audio-title">' + esc(a.audioTitle || ('Meet ' + a.title)) + '</div>' +
+        '<div class="audio-meta"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span id="audioDurText">--:--</span></div></div>' +
+        '<div class="audio-progress"><div class="audio-progress-bar" id="audioProgBar"></div></div>' +
+      '</div>'
+    ) : '';
+
+    var toolRail = (a.tools && a.tools.length) ? ('<div class="tool-rail" aria-label="Tools this agent works with">' + toolIconsHTML(a.tools, 'rail') + '</div>') : '';
+
+    var referenceBtn = a.referenceUrl ? ('<a class="btn btn-secondary" data-doc="' + esc(a.referenceUrl) + '" href="' + esc(a.referenceUrl) + '" target="_blank" rel="noopener noreferrer">Reference Guide</a>') : '';
+    var platformBtn = a.platformUrl ? ('<a class="btn btn-secondary" href="' + esc(a.platformUrl) + '" target="_blank" rel="noopener noreferrer">Open in Your AI Platform</a>') : '';
+
+    var inoutStrip = (a.inText || a.outText) ? (
+      '<section class="inout-strip" aria-label="What to give and what to expect">' +
+        (a.inText ? ('<div class="io-block"><div class="io-label">In <span class="io-slash">//</span></div><div class="io-text">' + esc(a.inText) + '</div></div>') : '') +
+        (a.outText ? ('<div class="io-block"><div class="io-label">Out <span class="io-slash">//</span></div><div class="io-text">' + esc(a.outText) + '</div></div>') : '') +
+      '</section>'
+    ) : '';
+
+    var factRail = (a.tools && a.tools.length) ? ('<aside class="fact-rail"><div class="fact-block"><h5>Toolbox</h5>' + toolIconsHTML(a.toolboxItems && a.toolboxItems.length ? a.tools : a.tools, 'box') + '</div></aside>') : '';
+    var longDescSection = (a.longDesc && a.longDesc.length) ? (
+      '<div class="long-desc-wrap' + (factRail ? '' : ' no-rail') + '"><div class="long-desc">' +
+        a.longDesc.map(function(p, i) { return '<p class="' + (i === 0 ? 'lede' : '') + '">' + esc(p) + '</p>'; }).join('') +
+      '</div>' + factRail + '</div>'
+    ) : '';
+
+    /* v1.03: markdown pane is now collapsible (a full deploy prompt used to
+       run the hero page on for thousands of pixels with no way to skip it)
+       -- default-collapsed with a fade + "Show full markdown" toggle, plus
+       a copy-to-clipboard button so a seasoned user can grab the text
+       without expanding anything. skwxToggleMd/skwxCopyMd are defined once
+       in the shared hero-page scripts below. */
+    var mdTabContent = a.agentMarkdown
+      ? (
+          '<div class="md-toolbar"><button type="button" class="btn btn-secondary md-copy-btn" onclick="skwxCopyMd(this)">Copy to clipboard</button></div>' +
+          '<div class="md-pane md-collapsed" id="md-pane">' + a.agentMarkdown + '</div>' +
+          '<button type="button" class="md-expand-btn" onclick="skwxToggleMd(this)">Show full markdown &darr;</button>'
+        )
+      : ('<div class="md-note">' + esc(a.agentMarkdownNote || '') + '</div>');
+
+    /* Sample Outputs -- small gallery, one card per source (image + label,
+       click opens the same [data-doc] overlay the Reference Guide button
+       uses). Renders only when a.sampleOutputs is populated (array of
+       {label, img, url}, img optional); leave it out or empty and this tab
+       simply doesn't appear -- no placeholder tab ever ships. */
+    var hasSampleOutputs = !!(a.sampleOutputs && a.sampleOutputs.length);
+    var soTabContent = hasSampleOutputs ? (
+      '<div class="sample-outputs">' +
+      a.sampleOutputs.map(function(s) {
+        return '<a class="sample-output-card" data-doc="' + esc(s.url) + '" href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">' +
+          (s.img ? ('<img src="' + esc(s.img) + '" alt="" class="sample-output-img" onerror="this.style.display=\'none\';this.parentElement.classList.add(\'no-img\');">') : '') +
+          (s.label ? ('<div class="sample-output-label">' + esc(s.label) + '</div>') : '') +
+        '</a>';
+      }).join('') +
+      '</div>'
+    ) : '';
+
+    var tabIntroBits = ['<strong>Agent Markdown:</strong> copy-ready prompt text for your AI platform.'];
+    if (hasSampleOutputs) tabIntroBits.push('<strong>Sample Outputs:</strong> real examples of what this agent returns.');
+    var tabIntro = '<p class="tab-intro">' + tabIntroBits.join(' ') + '</p>';
+
+    var tabDefs = [{ id: 'panel-md', label: 'Agent Markdown', content: mdTabContent }];
+    if (hasSampleOutputs) tabDefs.push({ id: 'panel-so', label: 'Sample Outputs', content: soTabContent });
+
+    var tabBarHTML = tabDefs.map(function(t, i) {
+      return '<button class="tab-btn' + (i === 0 ? ' active' : '') + '" onclick="skwxTab(this,\'' + t.id + '\')">' + esc(t.label) + '</button>';
+    }).join('');
+    var tabPanelsHTML = tabDefs.map(function(t, i) {
+      return '<div id="' + t.id + '" class="tab-panel' + (i === 0 ? ' active' : '') + '">' + t.content + '</div>';
+    }).join('');
+
+    var worksWithRow = (a.worksWith && a.worksWith.length) ? (
+      '<div class="row"><div class="row-title">Works With</div><div class="ribbon-wrap"><div class="track">' +
+      a.worksWith.map(function(w) {
+        return '<a href="#' + esc(w.slug) + '" data-hash="#' + esc(w.slug) + '" class="card">' +
+          '<img src="' + esc(w.img) + '" alt="" onerror="this.style.display=\'none\';">' +
+          '<div class="card-overlay"></div>' +
+          '<div class="card-content"><div class="card-title">' + esc(w.title) + '</div><div class="card-desc">' + esc(w.desc) + '</div></div>' +
+        '</a>';
+      }).join('') +
+      '</div></div></div>'
+    ) : '';
+
+    return (
+      /* No in-page "back" link here -- the topbar's own "<- Back to
+         Gallery" link (FIX 7) is visible on every page already. */
+      '<div class="hero">' +
+        '<div class="hero-media"><img src="' + esc(a.heroMedia) + '" alt="' + esc(a.title) + '" onerror="this.style.display=\'none\';this.parentElement.classList.add(\'media-fallback\');"></div>' +
+        '<div class="hero-scrim"></div>' +
+        audioBadge + toolRail +
+        '<div class="hero-content">' +
+          '<div class="hero-eyebrow">' + esc(a.eyebrow) + '</div>' +
+          '<div class="hero-title">' + esc(a.title) + '</div>' +
+          '<div class="meta-row">' +
+            (a.status ? ('<span class="meta-chip status">' + esc(a.status) + '</span>') : '') +
+            (a.model ? ('<span class="meta-chip"><span class="k">Model:</span> ' + esc(a.model) + '</span>') : '') +
+            (a.author ? ('<span class="meta-chip"><span class="k">Author:</span> ' + esc(a.author) + '</span>') : '') +
+            (a.version ? ('<span class="meta-chip"><span class="k">Version:</span> ' + esc(a.version) + '</span>') : '') +
+          '</div>' +
+          '<div class="action-row">' + platformBtn + referenceBtn + '</div>' +
+        '</div>' +
+      '</div>' +
+      inoutStrip +
+      '<div class="synopsis">' +
+        (a.tagline ? ('<p class="tagline">' + esc(a.tagline) + '</p>') : '') +
+        longDescSection +
+      '</div>' +
+      '<div class="tabs-section">' + tabIntro + '<div class="tab-bar">' + tabBarHTML + '</div>' + tabPanelsHTML + '</div>' +
+      worksWithRow +
+      (a.footerNote ? ('<footer class="note">' + esc(a.footerNote) + '</footer>') : '')
+    );
+  }
+
+  /* "How to Deploy This Item" -- a plain DOM insertion into this same
+     document's own .action-row (no cross-origin boundary to cross). Styled
+     as the primary action (filled, left-most) -- every hand-written button
+     in the row stays secondary by convention. */
+  function injectWalkthroughButton() {
+    var row = frame.querySelector('.action-row');
+    if (!row) return;
+    var link = document.createElement('a');
+    link.textContent = 'How to Deploy This Item';
+    link.href = '#walkthrough';
+    link.setAttribute('data-hash', '#walkthrough');
+    link.className = 'btn btn-primary';
+    row.insertBefore(link, row.firstChild);
+  }
+
+  function setFrame(hash) {
+    var isLegacy = (hash === '#learn' || hash === '#news');
+    var isAgent = !isLegacy && agentData[hash];
+    if (isAgent) {
+      frame.innerHTML = renderAgentHTML(agentData[hash]);
+      injectWalkthroughButton();
+    } else if (isLegacy) {
+      frame.innerHTML = legacyPages[hash];
+    } else {
+      frame.innerHTML = '';
+    }
+    frame.style.visibility = (isAgent || isLegacy) ? 'visible' : 'hidden';
+    frame.scrollTop = 0;
+  }
+
+  /* FIX 3/5: delegated click listener, single source of truth for ALL
+     data-hash navigation -- card clicks, nav links, the in-page back link,
+     Works With cards, and the walkthrough button are all just data-hash
+     elements in the SAME document now. No special-casing needed for what
+     used to be "inside the nested iframe" vs "outside" it -- that
+     distinction no longer exists. */
+  document.body.addEventListener('click', function(e) {
+    var card = e.target.closest ? e.target.closest('[data-hash]') : null;
+    if (!card) return;
+    e.preventDefault();
+    var hash = card.getAttribute('data-hash');
+    /* #walkthrough is a modal overlay on top of whatever agent page is
+       already showing, not a real routable destination -- writing it into
+       location.hash meant closing the drawer had nothing correct to
+       restore to (the agent hash it covered was gone), so a refresh,
+       bookmark, or shared link on that hash reopened the drawer with no
+       agent context at all. Route to it without touching the URL instead;
+       the agent hash underneath stays exactly where it was. */
+    if (hash === '#walkthrough') { router(hash); return; }
+    try { location.hash = hash; } catch (hashErr) { /* best-effort, see FIX 5 */ }
+    router(hash);
+  });
+
+  function router(explicitHash) {
+    /* FIX 7: guard against hashchange passing its native Event object
+       instead of a hash string. */
+    var isExplicitString = typeof explicitHash === 'string' && explicitHash;
+    var hash = isExplicitString || location.hash || '#home';
+
+    if (hash === '#walkthrough') {
+      if (typeof window.openDeployDrawer === 'function') { window.openDeployDrawer(); }
+      return;
+    }
+
+    var isHome = (hash === '#home' || (!agentData[hash] && hash !== '#learn' && hash !== '#news'));
+    home.classList.toggle('off', !isHome);
+    document.getElementById('nav-home').classList.toggle('active', isHome);
+    document.getElementById('nav-learn').classList.toggle('active', hash === '#learn');
+    document.getElementById('nav-news').classList.toggle('active', hash === '#news');
+    if (!isHome) { setFrame(hash); }
+    else {
+      setFrame(null);
+      window.focus();
+    }
+    chip.textContent = 'ENGINE OK - ' + Object.keys(agentData).length + ' items bundled';
+  }
+  window.addEventListener('hashchange', router);
+  router();
+  } catch (routerErr) {
+    /* Defensive only: a bad edit to agentData/legacyPages shouldn't take
+       down navigation silently -- surface it as a degraded chip instead. */
+    var errChip = document.getElementById('live-chip');
+    if (errChip) { errChip.textContent = 'ENGINE ERROR - see console'; errChip.style.color = '#e8b84b'; }
+    if (window.console && console.error) console.error('Router init failed:', routerErr);
+  }
+})();
+
+/* ============ AUDIO BRIDGE ============
+   One shared <audio> element, owned by this outer document, drives the
+   audio-overview badge on any item page rendered into #app-frame (both
+   live in the same document, so this is direct DOM access, not
+   postMessage). Generic across any item with hasAudio:true -- not
+   hardcoded to a specific one. Point AUDIO_SRC at a real file and set
+   hasAudio:true + audioTitle on an item to turn this on for it. */
+(function(){
+  var AUDIO_SRC = 'SiteAssets/YOUR-AUDIO-OVERVIEW.m4a';
+  var audio = document.createElement('audio');
+  audio.preload = 'metadata';
+  audio.src = AUDIO_SRC;
+  audio.style.display = 'none';
+  document.body.appendChild(audio);
+
+  function fmt(s) { if (!isFinite(s)) return '--:--'; var m = Math.floor(s/60), sec = Math.floor(s%60); return m + ':' + (sec < 10 ? '0' : '') + sec; }
+  function els() {
+    return {
+      icon: document.getElementById('audioPlayIcon'),
+      bar: document.getElementById('audioProgBar'),
+      dur: document.getElementById('audioDurText')
+    };
+  }
+  document.body.addEventListener('click', function(e) {
+    var badge = e.target.closest ? e.target.closest('#audioBadge') : null;
+    if (!badge || (e.target.closest && e.target.closest('a'))) return;
+    if (audio.paused) audio.play(); else audio.pause();
+  });
+  document.body.addEventListener('click', function(e) {
+    var prog = e.target.closest ? e.target.closest('.audio-progress') : null;
+    if (!prog) return;
+    e.stopPropagation();
+    var r = prog.getBoundingClientRect();
+    var pct = (e.clientX - r.left) / r.width;
+    if (isFinite(audio.duration)) audio.currentTime = pct * audio.duration;
+  });
+  audio.addEventListener('loadedmetadata', function() { var e = els(); if (e.dur) e.dur.textContent = fmt(audio.duration); });
+  audio.addEventListener('timeupdate', function() {
+    var e = els(); if (!e.bar) return;
+    e.bar.style.width = (audio.currentTime / audio.duration * 100) + '%';
+    e.dur.textContent = fmt(audio.currentTime) + ' / ' + fmt(audio.duration);
+  });
+  audio.addEventListener('play', function() {
+    var e = els(); if (!e.icon) return;
+    e.icon.style.cssText = 'border:none;width:14px;height:16px;margin-left:0;display:flex;align-items:center;justify-content:center;gap:3px;';
+    e.icon.innerHTML = '<div style="width:3px;height:14px;background:#fff;border-radius:1px;"></div><div style="width:3px;height:14px;background:#fff;border-radius:1px;"></div>';
+  });
+  audio.addEventListener('pause', function() {
+    var e = els(); if (!e.icon) return;
+    e.icon.style.cssText = 'width:0;height:0;border-style:solid;border-width:8px 0 8px 14px;border-color:transparent transparent transparent #fff;margin-left:2px;';
+    e.icon.innerHTML = '';
+  });
+  audio.addEventListener('ended', function() {
+    var e = els(); if (!e.bar) return;
+    e.bar.style.width = '0%';
+    audio.currentTime = 0;
+  });
+  /* Tear down (pause, don't destroy -- the element is a permanent, shared
+     part of the outer document, not recreated per item) when navigating
+     away from any page with the audio badge visible. */
+  window.addEventListener('hashchange', function() {
+    if (!document.getElementById('audioBadge')) audio.pause();
+  });
+})();
+
+/* ============ SHARED HERO-PAGE SCRIPTS ============
+   Written once here and shared by every item's hero page, instead of
+   duplicated per item. */
+function skwxTab(btn, panelId) {
+  var section = btn.closest('.tabs-section');
+  section.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+  section.querySelectorAll('.tab-panel').forEach(function(p){ p.classList.remove('active'); });
+  btn.classList.add('active');
+  document.getElementById(panelId).classList.add('active');
+}
+
+/* v1.03: collapsible Agent Markdown pane. The pane's own textContent is
+   still fully present in the DOM either way (just CSS-clipped when
+   collapsed) -- the Deploy Field Panel's extractAgentData() reads
+   .md-pane.textContent directly and doesn't care about this class. */
+function skwxToggleMd(btn) {
+  var pane = document.getElementById('md-pane');
+  if (!pane) return;
+  var collapsed = pane.classList.toggle('md-collapsed');
+  btn.textContent = collapsed ? 'Show full markdown ↓' : 'Show less ↑';
+}
+
+/* Same clipboard-write + execCommand fallback pattern used elsewhere in
+   this file, so copying works under whatever clipboard permissions the
+   host embed actually grants. */
+function skwxCopyMd(btn) {
+  var pane = document.getElementById('md-pane');
+  if (!pane) return;
+  var text = pane.innerText || pane.textContent || '';
+  var original = 'Copy to clipboard';
+  function done(label) {
+    btn.textContent = label;
+    setTimeout(function() { btn.textContent = original; }, 1500);
+  }
+  function fallbackCopy() {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    try { document.execCommand('copy'); done('Copied!'); }
+    catch (e) { done('Copy failed'); }
+    document.body.removeChild(ta);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function() { done('Copied!'); }, fallbackCopy);
+  } else {
+    fallbackCopy();
+  }
+}
+
+function siteNewsShow(id) {
+  var wrap = document.querySelector('.news-wrap');
+  if (!wrap) return;
+  var pages = wrap.querySelectorAll('.page');
+  for (var i = 0; i < pages.length; i++) { pages[i].classList.remove('active'); }
+  var target = document.getElementById('page-' + id);
+  if (target) { target.classList.add('active'); window.scrollTo(0, 0); }
+}
+
+/* Desk Guide overlay -- generic, [data-doc]-driven, written once instead of
+   duplicated on every page that has a Desk Guide button. */
+(function(){
+  var ov = document.getElementById('doc-overlay'), fr = document.getElementById('doc-frame'),
+      nt = document.getElementById('doc-newtab'), nm = document.getElementById('doc-name');
+  document.addEventListener('click', function(e){
+    var el = e.target.closest ? e.target.closest('[data-doc]') : null;
+    if (!el) return;
+    e.preventDefault();
+    var u = el.getAttribute('data-doc');
+    nm.textContent = (el.textContent || 'Document').trim(); nt.href = u; fr.src = u;
+    ov.classList.add('on');
+  });
+  document.getElementById('doc-close').addEventListener('click', function(){ ov.classList.remove('on'); fr.src = 'about:blank'; });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape') { ov.classList.remove('on'); fr.src = 'about:blank'; } });
+})();
+
+/* ============ HERO CAROUSEL ============ */
+(function(){
+  var track = document.querySelector('.hero-carousel-track');
+  var slides = document.querySelectorAll('.hero-slide');
+  var dots = document.querySelectorAll('.hero-dot');
+  var carousel = document.getElementById('hero-carousel');
+  if(!slides.length || !track) return;
+  var current = 0, timer = null, INTERVAL = 5000;
+
+  function goTo(idx){
+    slides[current].classList.remove('active');
+    slides[current].tabIndex = -1;
+    dots[current].classList.remove('active');
+    current = ((idx % slides.length) + slides.length) % slides.length;
+    slides[current].classList.add('active');
+    slides[current].tabIndex = 0;
+    dots[current].classList.add('active');
+    /* v1.03: this used to just shift by whole slide-widths (offset =
+       current * getSlideWidth()), which always parks the active slide at a
+       fixed x = track's own left padding -- never actually centered, so the
+       "peeking neighbors" this comment always claimed only ever showed a
+       sliver on one side, not both. Compute where the active slide truly
+       sits in the untransformed track, then shift by exactly enough to put
+       its center at the visible container's center. */
+    var slideW = slides[current].offsetWidth;
+    var gap = parseFloat(getComputedStyle(track).gap) || 12;
+    var trackPadLeft = parseFloat(getComputedStyle(track).paddingLeft) || 0;
+    var slideLeft = trackPadLeft + current * (slideW + gap);
+    var containerW = carousel.clientWidth;
+    var offset = slideLeft + (slideW / 2) - (containerW / 2);
+    track.style.transform = 'translateX(-' + offset + 'px)';
+    /* Reset the slow-zoom on the new slide's background */
+    var bg = slides[current].querySelector('.hero-slide-bg');
+    if(bg){ bg.style.transform='scale(1.0)'; void bg.offsetHeight; bg.style.transform=''; }
+  }
+
+  function startAuto(){ stopAuto(); timer = setInterval(function(){ goTo(current+1); }, INTERVAL); }
+  function stopAuto(){ if(timer){ clearInterval(timer); timer=null; } }
+
+  /* Dot clicks */
+  dots.forEach(function(dot){
+    dot.addEventListener('click', function(e){
+      e.preventDefault(); e.stopPropagation();
+      goTo(parseInt(this.dataset.slide));
+      startAuto();
+    });
+  });
+
+  /* Pause on hover / focus */
+  carousel.addEventListener('mouseenter', stopAuto);
+  carousel.addEventListener('mouseleave', startAuto);
+  carousel.addEventListener('focusin', stopAuto);
+  carousel.addEventListener('focusout', function(e){
+    if(!carousel.contains(e.relatedTarget)) startAuto();
+  });
+
+  /* Recalculate position on resize */
+  var resizeTimer;
+  window.addEventListener('resize', function(){
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function(){ goTo(current); }, 150);
+  });
+
+  startAuto();
+})();
+
+/* ============ ROW CAROUSEL (native scroll + clone-based infinite) ============ */
+(function initCarousels() {
+  var wraps = document.querySelectorAll('.track-wrap');
+  for (var w = 0; w < wraps.length; w++) {
+    (function(wrap) {
+      var track = wrap.querySelector('.scroll-track');
+      var left  = wrap.querySelector('.row-arrow--prev');
+      var right = wrap.querySelector('.row-arrow--next');
+      if (!track || !left || !right) return;
+      function getScrollAmt() {
+        var cw = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--card-w')) || 180;
+        return (cw + 10) * 3;
+      }
+
+      /* Visibility: only show arrows when track overflows */
+      function updateArrows() {
+        var overflows = track.scrollWidth > track.clientWidth + 4;
+        left.classList.toggle('visible', overflows);
+        right.classList.toggle('visible', overflows);
+      }
+
+      /* Clone cards for infinite illusion */
+      function setupInfinite() {
+        var cards = track.querySelectorAll('.card[data-show="yes"]');
+        if (cards.length < 1) return;
+        if (track.scrollWidth <= track.clientWidth + 4) return;
+        for (var i = 0; i < cards.length; i++) {
+          cards[i].setAttribute('data-original', 'true');
+        }
+        for (var i = 0; i < Math.min(cards.length, 6); i++) {
+          var clone = cards[i].cloneNode(true);
+          clone.removeAttribute('data-original');
+          clone.setAttribute('data-clone', 'true');
+          clone.setAttribute('tabindex', '-1');
+          clone.setAttribute('aria-hidden', 'true');
+          track.appendChild(clone);
+        }
+        /* v1.08: insertBefore(clone, track.firstChild) re-read firstChild on
+           every iteration, which is itself a just-inserted clone after the
+           first pass -- so ascending i (n-6..n-1) ended up prepended in
+           REVERSED order (clone(n-1) landing furthest from firstOrig,
+           clone(n-6) landing immediately adjacent to it) instead of mirroring
+           the tail in its real order. That broke the geometric assumption
+           the loop-length math below depends on (that the prepended region
+           is a clean mirror of the tail, contiguous and correctly ordered)
+           and was the real cause of the reset ping-ponging between the END
+           and START branches once the fixed-anchor reset above was replaced
+           with a relative shift. Capture the true first original ONCE before
+           the loop and always insert immediately before THAT fixed
+           reference, so ascending i naturally builds the mirror in the
+           correct order (clone(n-1), the true last card, ends up adjacent
+           to firstOrig, exactly like wrapping backward past card 1 should
+           show). */
+        var firstCardRef = cards[0];
+        for (var i = Math.max(0, cards.length - 6); i < cards.length; i++) {
+          var clone = cards[i].cloneNode(true);
+          clone.removeAttribute('data-original');
+          clone.setAttribute('data-clone', 'true');
+          clone.setAttribute('tabindex', '-1');
+          clone.setAttribute('aria-hidden', 'true');
+          track.insertBefore(clone, firstCardRef);
+        }
+        var firstOriginal = track.querySelector('[data-original="true"]');
+        if (firstOriginal) {
+          track.scrollLeft = firstOriginal.offsetLeft - 48;
+        }
+      }
+
+      /* Seamless loop on scroll */
+      var loopTimeout;
+      var suppressLoopCheck = false;
+      function handleLoop() {
+        if (suppressLoopCheck) return;
+        clearTimeout(loopTimeout);
+        loopTimeout = setTimeout(function() {
+          var originals = track.querySelectorAll('[data-original="true"]');
+          if (originals.length === 0) return;
+          var firstOrig = originals[0];
+          var lastOrig  = originals[originals.length - 1];
+          var pad = 48;
+          /* v1.08: the old reset jumped to a FIXED anchor (firstOrig.offsetLeft
+             - pad) regardless of how far past the boundary scrollLeft actually
+             was -- so a legitimate forward click that landed a click-width or
+             more into the appended-clone region had that entire distance
+             thrown away, snapping all the way back to the exact pre-click
+             position (confirmed live via the debug panel: "scrollLeft=2220 ->
+             smooth-scrolled to 2790 -> handleLoop reset to 2220", i.e. the
+             click's forward motion was completely erased). Appended/prepended
+             clones sit exactly one loop-length away from their real
+             counterparts (identical flex layout, contiguous), so shifting by
+             -loopLen/+loopLen instead of reassigning to a fixed anchor
+             preserves however far past the seam the scroll actually went. */
+          var gap = parseFloat(getComputedStyle(track).gap) || 10;
+          var loopLen = (lastOrig.offsetLeft + lastOrig.offsetWidth - firstOrig.offsetLeft) + gap;
+          /* v1.08 fix-of-a-fix #1: these two branches must be mutually
+             exclusive (else if). With the old fixed-anchor approach this
+             never mattered -- the anchor landed exactly on the other
+             branch's own threshold, never past it. A relative -loopLen
+             shift can land past the START threshold too when the overshoot
+             was large.
+             v1.08 fix-of-a-fix #2: setting track.scrollLeft directly (even
+             with behavior:'auto') still fires a 'scroll' event, which
+             re-enters this same handler and, 80ms later, re-evaluates the
+             boundary check against the position we just corrected TO. If
+             that position reads as past the *other* threshold, the other
+             branch "corrects" it right back -- caught live via the debug
+             panel as two log lines with the same timestamp, one undoing
+             the other (2790 -> 200 immediately followed by 200 -> 2790).
+             suppressLoopCheck ignores the scroll event our own reset
+             causes, so only a genuine user-driven scroll re-arms this
+             check -- this is what actually stops the snap, independent of
+             how precisely loopLen is calculated. */
+          if (track.scrollLeft + track.clientWidth >= lastOrig.offsetLeft + lastOrig.offsetWidth + pad + 10) {
+            var newLeftEnd = track.scrollLeft - loopLen;
+            suppressLoopCheck = true;
+            track.style.scrollBehavior = 'auto';
+            track.scrollLeft = newLeftEnd;
+            track.style.scrollBehavior = '';
+            setTimeout(function(){ suppressLoopCheck = false; }, 50);
+          } else if (track.scrollLeft < firstOrig.offsetLeft - pad - 10) {
+            var newLeftStart = track.scrollLeft + loopLen;
+            suppressLoopCheck = true;
+            track.style.scrollBehavior = 'auto';
+            track.scrollLeft = newLeftStart;
+            track.style.scrollBehavior = '';
+            setTimeout(function(){ suppressLoopCheck = false; }, 50);
+          }
+        }, 80);
+      }
+
+      /* v1.07: arrow clicks fired mid-animation used to race the seamless-
+         loop reset in handleLoop() -- a second click read the track's
+         still-interpolating scrollLeft as its base, then handleLoop's own
+         instant (behavior:'auto') scrollLeft jump landed on top of that
+         in-flight smooth animation, producing the "moves forward then
+         snaps back to nowhere" jank on every other click. Lock the arrows
+         for the duration of an active scroll (including the loop reset)
+         so only one scroll motion is ever in flight at a time. */
+      var scrollLock = false, scrollLockTimer;
+      function releaseLockSoon(delay) {
+        clearTimeout(scrollLockTimer);
+        scrollLockTimer = setTimeout(function(){ scrollLock = false; }, delay);
+      }
+
+      left.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (scrollLock) {
+          return;
+        }
+        scrollLock = true;
+        releaseLockSoon(600);
+        track.scrollBy({ left: -getScrollAmt(), behavior: 'smooth' });
+      });
+      right.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (scrollLock) {
+          return;
+        }
+        scrollLock = true;
+        releaseLockSoon(600);
+        track.scrollBy({ left: getScrollAmt(), behavior: 'smooth' });
+      });
+
+      track.addEventListener('scroll', function() {
+        releaseLockSoon(200);
+        if (track.querySelector('[data-original]')) handleLoop();
+      });
+
+      setupInfinite();
+      updateArrows();
+      window.addEventListener('resize', updateArrows);
+    })(wraps[w]);
+  }
+})();
+
+</script>
+
+</body>
+</html>
