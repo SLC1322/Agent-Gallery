@@ -62,11 +62,46 @@ list instead of the Excel workbook and regenerates the shell) — worth
 knowing going in, but only worth building if this native version proves
 insufficient or also gets blocked.
 
-## 4. Next step
+## 4. Status: `rowFormatter` blocked in the target tenant
 
-Apply `agent-gallery-view-formatting.json` to a test list in the target
-SharePoint site and confirm two things: (a) it renders as expected, and
-(b) nothing in that tenant's security policy strips the `rowFormatter`
-the way it stripped live script elsewhere in this project. Report back
-either way — a block here would be useful to know before investing further
-in this path.
+**Tested 2026-09-21: `agent-gallery-view-formatting.json` was stripped on
+save/render.** The tenant's security policy (the same "Firepit" layer
+documented throughout `BOTFLIX-SINGLEFILE-SHELL-v1.09.html`'s changelog)
+does not distinguish JSON view formatting from injected script — both get
+treated as customization and removed. `rowFormatter` specifically is the
+most script-adjacent piece of the JSON formatting surface (it replaces the
+entire row template), so this isn't surprising in hindsight; a narrower
+per-column formatter might survive where the full row template doesn't, but
+it wasn't tested since it wouldn't get close to a hero-card layout anyway.
+
+`agent-gallery-view-formatting.json` is kept in this repo as a record of
+what was tried, not as something to paste into this tenant again.
+
+## 5. Next test: native Gallery view (not JSON, not formatting)
+
+SharePoint's built-in **Gallery** view type is a different mechanism
+entirely — it's a core view-rendering mode picked from the UI, with no JSON
+and no formatter to strip. Worth testing before falling back to the
+static-build pattern, since it may survive where both live script and JSON
+formatting failed:
+
+1. Open the list → **+ Add view** (or the view switcher dropdown) → name it
+   → set **View format** to **Gallery** → **Create**.
+2. SharePoint auto-picks a card layout from the list's columns. Click
+   **Edit tile** to control it directly:
+   - Set the image field to `ThumbnailURL` (or attach real images to the
+     list items and use that field instead of a URL column).
+   - Set which fields show under the title (`Tagline`, `Category`, etc.).
+3. Filter the view to `Status = Live` (view filter, not formatting) so
+   draft rows stay hidden.
+
+Expected ceiling: this renders as SharePoint's own fixed card chrome — no
+dark theme, no red badge, no gradient overlay, no hover reveal. It will
+look like a native SharePoint gallery, not BotFlix. The question this test
+answers is narrower than "does it look right" — it's "does *any* card
+rendering of this list survive the tenant's policy," which determines
+whether a live-bound gallery is possible here at all, in any visual form.
+
+If Gallery view also gets stripped or disabled, that's a strong signal the
+tenant blocks all non-default list rendering, and the static-build fallback
+(§3) becomes the only live-adjacent option left.
