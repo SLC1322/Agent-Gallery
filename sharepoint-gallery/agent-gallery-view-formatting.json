@@ -1,0 +1,119 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/sp/view-formatting.schema.json",
+  "hideSelection": true,
+  "hideColumnHeader": true,
+  "rowFormatter": {
+    "elmType": "div",
+    "attributes": {
+      "class": "=if([$Status] == 'Live', 'agentCard', 'agentCard agentCard--hidden')"
+    },
+    "style": {
+      "display": "inline-block",
+      "vertical-align": "top",
+      "width": "230px",
+      "height": "330px",
+      "margin": "8px",
+      "position": "relative",
+      "border-radius": "6px",
+      "overflow": "hidden",
+      "background-color": "#141414",
+      "background-image": "='url(' + [$ThumbnailURL] + ')'",
+      "background-size": "cover",
+      "background-position": "center",
+      "box-shadow": "0 2px 10px rgba(0,0,0,0.65)"
+    },
+    "children": [
+      {
+        "elmType": "a",
+        "attributes": {
+          "href": "[$AgentURL]",
+          "target": "_blank",
+          "rel": "noopener noreferrer"
+        },
+        "style": {
+          "position": "absolute",
+          "top": "0",
+          "left": "0",
+          "right": "0",
+          "bottom": "0",
+          "display": "block",
+          "text-decoration": "none"
+        },
+        "children": [
+          {
+            "elmType": "div",
+            "attributes": {
+              "class": "=if([$NNSYApproved], 'agentCard-badge', 'agentCard-badge agentCard-badge--hidden')"
+            },
+            "style": {
+              "position": "absolute",
+              "top": "8px",
+              "right": "8px",
+              "background-color": "#CA110F",
+              "color": "#ffffff",
+              "font-family": "'Segoe UI', system-ui, sans-serif",
+              "font-size": "10px",
+              "font-weight": "700",
+              "letter-spacing": "0.04em",
+              "padding": "3px 6px",
+              "border-radius": "3px"
+            },
+            "txtContent": "APPROVED"
+          },
+          {
+            "elmType": "div",
+            "style": {
+              "position": "absolute",
+              "left": "0",
+              "right": "0",
+              "bottom": "0",
+              "padding": "36px 12px 12px 12px",
+              "background": "linear-gradient(to top, rgba(10,10,10,0.95) 10%, rgba(10,10,10,0.75) 55%, rgba(10,10,10,0) 100%)"
+            },
+            "children": [
+              {
+                "elmType": "div",
+                "txtContent": "[$Category]",
+                "style": {
+                  "color": "#CA110F",
+                  "font-family": "'Segoe UI', system-ui, sans-serif",
+                  "font-size": "10px",
+                  "font-weight": "700",
+                  "letter-spacing": "0.06em",
+                  "text-transform": "uppercase",
+                  "margin-bottom": "3px"
+                }
+              },
+              {
+                "elmType": "div",
+                "txtContent": "[$Title]",
+                "style": {
+                  "color": "#ffffff",
+                  "font-family": "'Segoe UI', system-ui, sans-serif",
+                  "font-size": "16px",
+                  "font-weight": "700",
+                  "margin-bottom": "4px"
+                }
+              },
+              {
+                "elmType": "div",
+                "txtContent": "[$Tagline]",
+                "style": {
+                  "color": "#d2d2d2",
+                  "font-family": "'Segoe UI', system-ui, sans-serif",
+                  "font-size": "12px",
+                  "line-height": "1.35",
+                  "overflow": "hidden",
+                  "text-overflow": "ellipsis",
+                  "display": "-webkit-box",
+                  "-webkit-line-clamp": "2",
+                  "-webkit-box-orient": "vertical"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
