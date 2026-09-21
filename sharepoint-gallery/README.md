@@ -105,3 +105,77 @@ whether a live-bound gallery is possible here at all, in any visual form.
 If Gallery view also gets stripped or disabled, that's a strong signal the
 tenant blocks all non-default list rendering, and the static-build fallback
 (§3) becomes the only live-adjacent option left.
+
+## 6. Native Gallery view worked well enough to expose a third option
+
+Gallery view rendered. Its tile editor accepts a field that stores actual
+HTML — a **Multiple lines of text** column set to **Enhanced rich text
+(rich text with pictures, tables, and hyperlinks)**. Shown as a tile field,
+its stored HTML renders inside the card. This is a different mechanism from
+both prior attempts: it's stored *content*, not injected *formatting/script*,
+so it isn't necessarily subject to the same policy that stripped `rowFormatter`
+— worth testing, not yet confirmed.
+
+**The tradeoff to understand going in:** a rich-text field holds static HTML
+per item — it has no `[$Column]` token syntax, so it can't reference the
+item's other columns at render time the way JSON formatting could. "Pulls
+information from the list" therefore has to mean something *writes* the
+composed HTML into this field whenever the source columns change, not that
+the HTML itself is a live template. That something is a Power Automate flow.
+
+### 6.1 Add the column
+
+On the list, add **CardHTML** — Multiple lines of text → **Enhanced rich
+text**. Add it as a field on the Gallery view's tile (Edit tile → add field
+→ CardHTML).
+
+### 6.2 Two template variants
+
+- `hero-card-template.html` — BotFlix-style image-bleed with gradient
+  overlay and corner badge. Uses `position:absolute`, which rich-text
+  sanitizers commonly strip. **Test this one first.**
+- `hero-card-template-fallback.html` — same content, stacked block layout,
+  no absolute positioning anywhere. Use this if the primary template's
+  layout collapses on save (a sure sign `position` got stripped).
+
+Both use the same `{{PLACEHOLDER}}` tokens:
+
+| Placeholder | Source column |
+|---|---|
+| `{{ThumbnailURL}}` | `ThumbnailURL` |
+| `{{AgentURL}}` | `AgentURL` |
+| `{{Category}}` | `Category` |
+| `{{Title}}` | `Title` |
+| `{{Tagline}}` | `Tagline` |
+| `{{ApprovedDisplay}}` | `'block'` if `NNSYApproved` is Yes, else `'none'` |
+
+### 6.3 Power Automate flow to populate CardHTML
+
+1. **Create a flow**: Automated cloud flow, trigger = **When an item is
+   created or modified** (SharePoint) → Site = target site, List = the
+   agent gallery list.
+2. **Compose** action ("GeneratedCardHTML"): paste the contents of
+   `hero-card-template.html` (or the fallback) into the input box as plain
+   text, then click into each `{{...}}` position and use the dynamic-content
+   picker to insert the matching field from the trigger — it inserts
+   `@{triggerBody()?['ColumnName']}` inline. For `{{ApprovedDisplay}}`, type
+   the expression directly instead of picking a field:
+   `@{if(equals(triggerBody()?['NNSYApproved'], true), 'block', 'none')}`
+3. **Condition**: `equals(outputs('GeneratedCardHTML'), triggerBody()?['CardHTML'])`
+   - **Yes** → Terminate (nothing changed, stop here).
+   - **No** → **Update item**, set `CardHTML` = `outputs('GeneratedCardHTML')`.
+
+The condition is the loop-prevention: updating `CardHTML` re-fires the
+trigger, but on that second pass the generated HTML now equals the stored
+value, so the flow terminates immediately instead of looping.
+
+### 6.4 What to test and report back
+
+1. Does the flow run and populate `CardHTML` without erroring?
+2. Does the primary template's `position:absolute` survive, or does the
+   card collapse (switch to the fallback if so)?
+3. Does any inline style get silently dropped (gradient, border-radius,
+   box-shadow) even if the layout itself holds?
+
+Any one of these failing narrows the option further; all three holding
+means this is the live gallery.

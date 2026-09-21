@@ -1,0 +1,24 @@
+<!--
+  Hero card template — sanitizer-safe fallback variant.
+
+  Use this if hero-card-template.html's position:absolute overlay gets
+  stripped or collapses on save. No absolute/fixed positioning anywhere —
+  everything is normal block flow, so there's nothing for a sanitizer to
+  drop that would break the layout. Image sits above the text instead of
+  behind it; no gradient bleed, no corner badge overlay (badge moves inline
+  next to the category label instead).
+
+  Same {{PLACEHOLDER}} tokens as the primary template — see
+  ../sharepoint-gallery/README.md section 6 for the Power Automate flow
+  that fills them in.
+-->
+<div style="width:230px;border-radius:6px;overflow:hidden;background-color:#141414;font-family:'Segoe UI',system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,0.65);">
+  <div style="width:230px;height:180px;background-color:#0a0a0a;background-image:url('{{ThumbnailURL}}');background-size:cover;background-position:center;"></div>
+  <a href="{{AgentURL}}" target="_blank" rel="noopener noreferrer" style="display:block;padding:10px 12px 12px 12px;text-decoration:none;">
+    <div style="color:#CA110F;font-size:10px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;margin-bottom:3px;">
+      {{Category}}<span style="background-color:#CA110F;color:#ffffff;font-size:9px;font-weight:700;letter-spacing:0.03em;padding:2px 5px;border-radius:3px;margin-left:6px;display:{{ApprovedDisplay}};">APPROVED</span>
+    </div>
+    <div style="color:#ffffff;font-size:16px;font-weight:700;margin-bottom:4px;">{{Title}}</div>
+    <div style="color:#d2d2d2;font-size:12px;line-height:1.35;">{{Tagline}}</div>
+  </a>
+</div>
